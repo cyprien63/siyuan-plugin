@@ -1,7 +1,7 @@
 {
   "name": "siyuan-github-sync",
-  "author": "Cyprien",
-  "url": "https://github.com/Cyprien/siyuan-github-sync",
+  "author": "Cyprien63",
+  "url": "https://github.com/cyprien63/siyuan-plugin",
   "version": "1.0.0",
   "minAppVersion": "3.6.4",
   "backends": [
@@ -10,8 +10,7 @@
     "darwin",
     "ios",
     "android",
-    "docker",
-    "all"
+    "docker"
   ],
   "frontends": [
     "desktop",
@@ -24,19 +23,17 @@
     "zh_CN": "GitHub 同步"
   },
   "description": {
-    "default": "Seamlessly sync your SiYuan notes with a GitHub repository using the GitHub REST API.",
-    "zh_CN": "使用 GitHub REST API 将 SiYuan 笔记与 GitHub 仓库同步。"
+    "default": "Sync SiYuan notes with a GitHub repository. Incremental push/pull, 3-way merge, commit history, restore, Groq AI commit messages.",
+    "zh_CN": "将思源笔记与 GitHub 仓库同步。增量推送/拉取、三方合并、提交历史、恢复、Groq AI 提交消息。"
   },
   "readme": {
     "default": "README.md"
-  },
-  "funding": {
-    "openCollective": ""
   },
   "keywords": [
     "sync",
     "github",
     "backup",
+    "git",
     "version-control"
   ]
 }
