@@ -1,74 +1,58 @@
-<<<<<<< HEAD
-# siyuan-plugin
-=======
-# GitHub Sync Plugin for SiYuan
+# SiYuan GitHub Sync Plugin
 
-Sync your SiYuan notes with a private GitHub repository using only the GitHub REST API — fully cross-platform: **Windows, Linux, macOS, Android**.
+Synchronisez vos notes SiYuan avec un dépôt GitHub privé via l'API REST GitHub. Compatible **Windows, Linux, macOS et Android**.
 
-## Features
+## Fonctionnalités
 
-- 🔒 **Secure** — PAT stored locally via SiYuan's native `saveData()`
-- 📤 **Push** — Upload sync metadata to GitHub (creates or updates the file)
-- 📥 **Pull** — Fetch the latest sync state from GitHub
-- ✅ **Connection test** — Verify credentials before saving
-- 🤖 **Auto-check on startup** — Silent background connectivity check
-- 📱 **Android-safe** — Zero Node.js APIs, all `fetch()` + SiYuan SDK
+- 🔒 **Sécurisé** — Token stocké localement via `saveData()`
+- 📤 **Push incrémental** — Envoie uniquement les fichiers modifiés
+- 📥 **Pull incrémental** — Récupère les fichiers distants modifiés
+- 🤝 **Merge automatique** — Fusion 3-way avant push (local / distant / dernier état connu)
+- ⚠️ **Gestion des conflits** — Priorité locale en cas de conflit
+- 📜 **Historique** — Consulte les 30 derniers commits
+- 🔄 **Restauration** — Restaure un commit depuis l'historique
+- 📋 **Diff avant push** — Affiche les fichiers ajoutés/modifiés/supprimés avant d'envoyer
+- 🤖 **Groq AI** — Messages de commit générés automatiquement (optionnel)
+- 📤📥 **Export/Import** — Sauvegarde et restaure la configuration
 
-## Installation (Development / Self-hosted)
+## Installation
 
-See [Build Instructions](#build--install) below.
+### Depuis le dossier compilé
 
-## Build & Install
-
-### Prerequisites
-
-- Node.js ≥ 18 (or Bun / pnpm)
-- npm or pnpm
-
-### Steps
-
-```bash
-# 1. Enter the project directory
-cd "sync plug SIYUAN"
-
-# 2. Install dependencies
-npm install
-# or: pnpm install
-
-# 3a. Development build (watch mode)
-npm run dev
-
-# 3b. Production build (creates dist/ + zip)
-npm run build
-```
-
-After `npm run build`:
-
-1. A `dist/` folder is created containing `index.js`, `index.css`, and `plugin.json`.
-2. A `siyuan-github-sync.zip` is created in `dist/`.
-
-### Load into SiYuan
-
-**Method A — Symlink (for active development):**
-```
-{siyuan-workspace}/data/plugins/siyuan-github-sync/  →  your project root
-```
-
-**Method B — Manual copy:**
-Copy the contents of `dist/` into:
+Copie le dossier `dist/` ou le dossier compilé dans :
 ```
 {siyuan-workspace}/data/plugins/siyuan-github-sync/
 ```
 
-Then restart SiYuan and enable the plugin in **Settings → Marketplace → Installed**.
+Puis redémarre SiYuan et active le plugin dans **Paramètres → Marketplace → Installé**.
+
+### Build depuis les sources
+
+```bash
+npm install
+npm run build
+```
+
+Le dossier `dist/` sera créé. Copie-le dans le dossier `data/plugins/` de SiYuan.
+
+### Sur mobile Android
+
+Utilise un gestionnaire de fichiers pour copier le dossier `siyuan-github-sync` dans `Android/data/com.example.siyuan/files/data/plugins/` (ou le chemin équivalent selon votre version).
 
 ## Configuration
 
-1. Open **Settings** in SiYuan → Click ⚙️ next to "GitHub Sync"
-2. Enter your **GitHub Username**, **Repository Name**, and **Personal Access Token** (needs `repo` scope)
-3. Click **Connect & Test** — on success credentials are saved automatically
+1. Ouvre **Paramètres** → clique sur ⚙️ à côté de "GitHub Sync"
+2. Renseigne **Nom d'utilisateur GitHub**, **Nom du dépôt**, **Token PAT** (scope `repo`)
+3. Clique sur **Tester GitHub** pour vérifier la connexion
+4. Appuie sur **Enregistrer**
 
-## License
+## Développement
+
+```bash
+npm run dev    # Mode watch
+./compile.sh   # Build + déploiement automatique vers SiYuan (Linux)
+```
+
+## Licence
 
 MIT
->>>>>>> 9cdf981 (Initial commit - SiYuan GitHub Sync plugin)
