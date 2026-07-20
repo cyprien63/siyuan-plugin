@@ -1,0 +1,32 @@
+{
+  "name": "siyuan-github-sync",
+  "version": "1.0.0",
+  "description": "SiYuan plugin to sync notes with a GitHub repository via the GitHub REST API",
+  "scripts": {
+    "dev": "webpack --config webpack.config.js --mode development --watch",
+    "build": "webpack --config webpack.config.js --mode production",
+    "lint": "eslint src --ext .ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "copy-webpack-plugin": "^12.0.2",
+    "css-loader": "^7.1.2",
+    "esbuild": "^0.24.0",
+    "esbuild-loader": "^4.2.2",
+    "mini-css-extract-plugin": "^2.9.2",
+    "sass": "^1.80.4",
+    "sass-loader": "^16.0.4",
+    "siyuan": "^1.2.1",
+    "typescript": "^5.6.3",
+    "webpack": "^5.95.0",
+    "webpack-cli": "^5.1.4",
+    "zip-webpack-plugin": "^4.0.1"
+  },
+  "keywords": [
+    "siyuan",
+    "plugin",
+    "github",
+    "sync"
+  ],
+  "license": "MIT"
+}

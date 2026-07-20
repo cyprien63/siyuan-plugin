@@ -1,0 +1,44 @@
+/* GitHub Sync Plugin — index.scss
+ * Minimal styles; SiYuan's built-in b3-* utility classes handle most styling.
+ */
+
+.github-sync {
+    &__status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--b3-theme-on-surface);
+    }
+
+    &__dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--b3-theme-primary);
+
+        &--ok   { background: #4caf50; }
+        &--fail { background: #f44336; }
+        &--idle { background: #9e9e9e; }
+    }
+}
+
+@keyframes github-sync-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.7); }
+}
+
+@media (max-width: 600px) {
+    .b3-dialog__content {
+        max-height: 60vh !important;
+        padding: 12px !important;
+    }
+    .b3-dialog__action {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    .b3-dialog__action button {
+        font-size: 12px;
+        padding: 6px 10px;
+    }
+}

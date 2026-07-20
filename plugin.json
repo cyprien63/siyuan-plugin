@@ -1,0 +1,42 @@
+{
+  "name": "siyuan-github-sync",
+  "author": "Cyprien",
+  "url": "https://github.com/Cyprien/siyuan-github-sync",
+  "version": "1.0.0",
+  "minAppVersion": "3.6.4",
+  "backends": [
+    "windows",
+    "linux",
+    "darwin",
+    "ios",
+    "android",
+    "docker",
+    "all"
+  ],
+  "frontends": [
+    "desktop",
+    "mobile",
+    "browser-desktop",
+    "browser-mobile"
+  ],
+  "displayName": {
+    "default": "GitHub Sync",
+    "zh_CN": "GitHub 同步"
+  },
+  "description": {
+    "default": "Seamlessly sync your SiYuan notes with a GitHub repository using the GitHub REST API.",
+    "zh_CN": "使用 GitHub REST API 将 SiYuan 笔记与 GitHub 仓库同步。"
+  },
+  "readme": {
+    "default": "README.md"
+  },
+  "funding": {
+    "openCollective": ""
+  },
+  "keywords": [
+    "sync",
+    "github",
+    "backup",
+    "version-control"
+  ]
+}
