@@ -2,7 +2,7 @@
   "name": "siyuan-github-sync",
   "author": "Cyprien63",
   "url": "https://github.com/cyprien63/siyuan-plugin",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "3.6.4",
   "backends": [
     "windows",
