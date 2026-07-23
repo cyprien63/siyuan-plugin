@@ -110,15 +110,20 @@ function encodePath(path: string): string {
     return path.split("/").map(encodeURIComponent).join("/");
 }
 
+function sanitizeForDisplay(s: string): string {
+    return s.replace(/[<>&"']/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#39;" })[c] || c);
+}
+
 function friendlyError(err: unknown): string {
-    const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    const raw = err instanceof Error ? err.message : String(err);
+    const msg = raw.toLowerCase();
     if (msg.includes("bad credentials") || msg.includes("401") || msg.includes("token")) return "❌ Token GitHub invalide ou expiré. Va dans Paramètres → génère un nouveau token.";
     if (msg.includes("not found") || msg.includes("404")) return "❌ Dépôt GitHub introuvable. Vérifie le nom du dépôt dans Paramètres.";
     if (msg.includes("networkerror") || msg.includes("failed to fetch") || msg.includes("network")) return "❌ Pas de connexion internet. Vérifie ta connexion.";
     if (msg.includes("rate limit") || msg.includes("403")) return "❌ Limite d'appels API GitHub atteinte. Réessaie dans 1 minute.";
     if (msg.includes("aborted") || msg.includes("timeout")) return "❌ Requête annulée (timeout). Réessaie.";
     if (msg.includes("size") || msg.includes("large")) return "❌ Fichier trop volumineux (>25 Mo). Ignoré.";
-    return `❌ ${err instanceof Error ? err.message : String(err)}`;
+    return `❌ ${sanitizeForDisplay(raw)}`;
 }
 
 // ─── UI de Progression ────────────────────────────────────────────────────────
@@ -268,6 +273,15 @@ export default class GitHubSyncPlugin extends Plugin {
         eBtn.className = "b3-button b3-button--outline fn__block";
         eBtn.textContent = "📤 Exporter";
         eBtn.onclick = () => {
+            const hasToken = !!tIn.value.trim();
+            const hasGroq = !!gIn.value.trim();
+            const warnParts: string[] = [];
+            if (hasToken) warnParts.push("le token GitHub");
+            if (hasGroq) warnParts.push("la clé API Groq");
+            if (warnParts.length > 0) {
+                const ok = confirm(`⚠️ Attention : le fichier exporté contiendra ${warnParts.join(" et ")} en clair.\nNe partage jamais ce fichier.`);
+                if (!ok) return;
+            }
             const cfg = { username: uIn.value.trim(), repo: rIn.value.trim(), token: tIn.value.trim(), groqKey: gIn.value.trim(), showDiff: dIn.checked };
             const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: "application/json" });
             const a = document.createElement("a");
@@ -952,8 +966,6 @@ class HistoryDialog {
     }
 
     private escapeHtml(s: string): string {
-        const div = document.createElement("div");
-        div.textContent = s;
-        return div.innerHTML;
+        return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] || c);
     }
 }
