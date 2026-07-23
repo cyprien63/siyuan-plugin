@@ -4,6 +4,10 @@ set -euo pipefail
 PLUGIN_NAME="siyuan-github-sync"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ─── Lire la version depuis plugin.json ────────────────────────────────────────
+VERSION=$(grep -o '"version": *"[^"]*"' "$SCRIPT_DIR/plugin.json" | head -1 | sed 's/.*"\([0-9][0-9.]*\)".*/\1/')
+ZIP_NAME="${PLUGIN_NAME}-${VERSION}.zip"
+
 # ─── Mode ──────────────────────────────────────────────────────────────────────
 # Usage: ./compile.sh          → test (déploiement dans SiYuan)
 #        ./compile.sh publish  → publie (package.zip + rien d'autre)
@@ -44,19 +48,19 @@ echo ""
 
 # ─── Étape 3 : Résultat ───────────────────────────────────────────────────────
 if [ "$MODE" = "publish" ]; then
-    # Mode publication : créer package.zip dans dist/
+    # Mode publication : créer le zip avec le nom de la version
     cd "$SCRIPT_DIR"
-    if [ -f "dist/package.zip" ]; then rm -f "dist/package.zip"; fi
-    cd dist && zip -r package.zip . && cd ..
-    echo -e "       ${GREEN}OK${NC} - package.zip créé dans dist/"
+    rm -f "dist/package.zip" "dist/${ZIP_NAME}" "dist/siyuan-github-sync.zip"
+    cd dist && zip -r "${ZIP_NAME}" . -x "siyuan-github-sync.zip" && cd ..
+    echo -e "       ${GREEN}OK${NC} - ${ZIP_NAME} créé dans dist/"
     echo ""
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "${CYAN}│   PRÊT POUR LA RELEASE                          │${NC}"
     echo -e "${CYAN}│                                                  │${NC}"
-    echo -e "${CYAN}│   Upload dist/package.zip sur GitHub Release     │${NC}"
+    echo -e "${CYAN}│   Upload dist/${ZIP_NAME} sur GitHub Release  │${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
     echo ""
-    echo -e "  Fichier : ${YELLOW}$SCRIPT_DIR/dist/package.zip${NC}"
+    echo -e "  Fichier : ${YELLOW}$SCRIPT_DIR/dist/${ZIP_NAME}${NC}"
     echo ""
 else
     # Mode test : déploiement dans SiYuan
