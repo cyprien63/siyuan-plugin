@@ -71,6 +71,7 @@ interface MergePlan {
     toDelete:    { githubPath: string }[];
     toPull:      { githubPath: string; siYuanPath: string }[];
     conflicted:  { githubPath: string; siYuanPath: string }[];
+    skippedLarge: number;
 }
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
@@ -365,7 +366,7 @@ export default class GitHubSyncPlugin extends Plugin {
         this.currentUI = new SyncProgressUI(type === "push" ? "⏫ Smart Push (Incrémental)" : "⏬ Smart Pull (Incrémental)", () => { this.currentUI = null; });
         if (this.lastProgress.finished) {
             if (this.lastProgress.error) this.currentUI.error(this.lastProgress.message);
-            else this.currentUI.finish(this.lastProgress.message, type === "pull");
+            else this.currentUI.finish(this.lastProgress.message);
         } else {
             this.currentUI.update(this.lastProgress.percent, this.lastProgress.status, this.lastProgress.details);
         }
@@ -407,6 +408,14 @@ export default class GitHubSyncPlugin extends Plugin {
     private async siYuanRefreshFiletree(): Promise<boolean> {
         try {
             const res = await fetch("/api/filetree/refreshFiletree", { method: "POST", body: "{}" });
+            const json = await res.json();
+            return json.code === 0;
+        } catch { return false; }
+    }
+
+    private async siYuanRemoveFile(path: string): Promise<boolean> {
+        try {
+            const res = await fetch("/api/file/removeFile", { method: "POST", body: JSON.stringify({ path }) });
             const json = await res.json();
             return json.code === 0;
         } catch { return false; }
@@ -474,14 +483,16 @@ export default class GitHubSyncPlugin extends Plugin {
     ): Promise<MergePlan> {
         const synced = await this.loadSyncedState();
         const syncedFiles = synced?.files || {};
-        const plan: MergePlan = { toUpload: [], toReuse: [], toDelete: [], toPull: [], conflicted: [] };
+        const plan: MergePlan = { toUpload: [], toReuse: [], toDelete: [], toPull: [], conflicted: [], skippedLarge: 0 };
 
         const localPathSet = new Set(localFiles.map(f => f.githubPath));
         let processed = 0;
+        let skippedLarge = 0;
 
         for (const f of localFiles) {
             const content = await this.siYuanGetFile(f.siYuanPath);
-            if (!content || content.byteLength > MAX_FILE_BYTES) { processed++; continue; }
+            if (!content) { processed++; continue; }
+            if (content.byteLength > MAX_FILE_BYTES) { processed++; skippedLarge++; continue; }
 
             const localSha = await calculateGitSha(content);
             const remoteSha = remoteMap.get(f.githubPath);
@@ -494,8 +505,9 @@ export default class GitHubSyncPlugin extends Plugin {
             } else if (!syncedSha || localSha !== syncedSha) {
                 if (remoteSha !== syncedSha) {
                     plan.conflicted.push({ githubPath: f.githubPath, siYuanPath: f.siYuanPath });
+                } else {
+                    plan.toUpload.push({ githubPath: f.githubPath, content });
                 }
-                plan.toUpload.push({ githubPath: f.githubPath, content });
             } else {
                 plan.toPull.push({ githubPath: f.githubPath, siYuanPath: f.siYuanPath });
             }
@@ -515,6 +527,7 @@ export default class GitHubSyncPlugin extends Plugin {
             }
         }
 
+        plan.skippedLarge = skippedLarge;
         return plan;
     }
 
@@ -539,7 +552,14 @@ export default class GitHubSyncPlugin extends Plugin {
                 lines.push(`<div style="margin:6px 0;font-weight:bold;color:#4caf50;">✅ ${plan.toReuse.length} fichier(s) inchangé(s)</div>`);
             }
             if (plan.conflicted.length > 0) {
-                lines.push(`<div style="margin:6px 0;font-weight:bold;color:#ff9800;">⚠️ ${plan.conflicted.length} conflit(s) (priorité locale)</div>`);
+                lines.push(`<div style="margin:6px 0;font-weight:bold;color:#ff9800;">⚠️ ${plan.conflicted.length} conflit(s) — modifié des 2 côtés, ignoré</div>`);
+                for (const c of plan.conflicted.slice(0, 10)) {
+                    lines.push(`<div style="padding:2px 8px;font-size:12px;font-family:monospace;">⚠ ${c.githubPath}</div>`);
+                }
+                if (plan.conflicted.length > 10) lines.push(`<div style="padding:2px 8px;font-size:11px;opacity:.6;">… et ${plan.conflicted.length - 10} autre(s)</div>`);
+            }
+            if (plan.skippedLarge > 0) {
+                lines.push(`<div style="margin:6px 0;font-weight:bold;color:#9e9e9e;">📦 ${plan.skippedLarge} fichier(s) ignoré(s) (>25 Mo)</div>`);
             }
             const dialog = new Dialog({
                 title: "📋 Résumé avant envoi",
@@ -593,11 +613,13 @@ export default class GitHubSyncPlugin extends Plugin {
             }
 
             const totalChanges = plan.toUpload.length + plan.toDelete.length;
-            if (totalChanges === 0) {
+            if (totalChanges === 0 && plan.conflicted.length === 0) {
                 const newFilesState: Record<string, string> = {};
                 for (const r of plan.toReuse) newFilesState[r.githubPath] = r.sha;
                 await this.saveSyncedState(lastCommitSha || "", newFilesState);
-                const msg = "Tout est déjà à jour ! Aucun envoi nécessaire.";
+                const msg = plan.conflicted.length
+                    ? `Aucun changement à envoyer. ⚠️ ${plan.conflicted.length} conflit(s) ignoré(s).`
+                    : "Tout est déjà à jour ! Aucun envoi nécessaire.";
                 this.lastProgress = { ...this.lastProgress, finished: true, message: msg };
                 if (this.currentUI) this.currentUI.finish(msg);
                 return;
@@ -631,7 +653,7 @@ export default class GitHubSyncPlugin extends Plugin {
             }
 
             for (const d of plan.toDelete) {
-                treeItems.push({ path: d.githubPath, mode: "100644", type: "blob", sha: null });
+                treeItems.push({ path: d.githubPath, mode: "100644", sha: null });
                 uploadedSummaries.push({ path: d.githubPath, content: "(fichier supprimé)" });
             }
 
@@ -667,7 +689,8 @@ export default class GitHubSyncPlugin extends Plugin {
             if (plan.toDelete.length) parts.push(`${plan.toDelete.length} supprimé(s)`);
             if (plan.toReuse.length) parts.push(`${plan.toReuse.length} inchangé(s)`);
             let msg = `Push terminé — ${parts.join(", ")}.`;
-            if (plan.conflicted.length) msg += ` ⚠️ ${plan.conflicted.length} conflit(s) résolu(s) (priorité locale).`;
+            if (plan.skippedLarge) msg += ` ⚠️ ${plan.skippedLarge} fichier(s) ignoré(s) (>25 Mo).`;
+            if (plan.conflicted.length) msg += ` ⚠️ ${plan.conflicted.length} conflit(s) non résolu(s) (modifié des 2 côtés).`;
             this.lastProgress = { ...this.lastProgress, finished: true, message: msg };
             if (this.currentUI) this.currentUI.finish(msg);
             await this.saveSyncTimestamp();
@@ -747,7 +770,7 @@ export default class GitHubSyncPlugin extends Plugin {
             let updated = 0, skipped = 0, errors = 0;
             for (let i = 0; i < remoteItems.length; i++) {
                 const item = remoteItems[i];
-                const siPath = item.path.slice(SYNC_ROOT.length);
+                const siPath = item.path.slice(SYNC_ROOT.length).replace(/^\//, "");
                 this.updateProgress(Math.round((i / remoteItems.length) * 100), `Pull : ${i + 1}/${remoteItems.length}`, siPath);
 
                 if (LOCKED_EXTENSIONS.some(ext => siPath.toLowerCase().endsWith(ext)) || siPath.includes("/temp/") || SKIP_PATH_FRAGMENTS.some(f => siPath.includes(f))) {
@@ -776,11 +799,24 @@ export default class GitHubSyncPlugin extends Plugin {
             }
 
             await this.siYuanRefreshFiletree();
+
+            const localFilesForDelete = await this.collectDir("/", SYNC_ROOT);
+            const remotePathSet = new Set(remoteItems.map(i => i.path));
+            let deleted = 0;
+            for (const lf of localFilesForDelete) {
+                if (LOCKED_EXTENSIONS.some(ext => lf.githubPath.toLowerCase().endsWith(ext)) ||
+                    lf.githubPath.endsWith(".siyuan.sy")) continue;
+                if (!remotePathSet.has(lf.githubPath) && !remotePathSet.has(lf.githubPath.replace(/^\//, ""))) {
+                    const ok = await this.siYuanRemoveFile(lf.siYuanPath);
+                    if (ok) deleted++;
+                }
+            }
+
             const newFilesState: Record<string, string> = {};
             remoteItems.forEach(item => { newFilesState[item.path] = item.sha; });
             await this.saveSyncedState(refData.object.sha, newFilesState);
 
-            let msg = `Pull terminé : ${updated} fichiers mis à jour, ${skipped} déjà à jour ou protégés.`;
+            let msg = `Pull terminé : ${updated} fichiers mis à jour, ${skipped} déjà à jour ou protégés, ${deleted} supprimé(s).`;
             if (errors > 0) msg += ` ⚠️ ${errors} erreur(s).`;
             this.lastProgress = { ...this.lastProgress, finished: true, message: msg };
             if (this.currentUI) this.currentUI.finish(msg);
@@ -865,7 +901,7 @@ export default class GitHubSyncPlugin extends Plugin {
 
         let updated = 0;
         for (const item of blobs) {
-            const siPath = item.path.slice(SYNC_ROOT.length);
+            const siPath = item.path.slice(SYNC_ROOT.length).replace(/^\//, "");
             if (LOCKED_EXTENSIONS.some(ext => siPath.toLowerCase().endsWith(ext)) ||
                 siPath.includes("/temp/") || SKIP_PATH_FRAGMENTS.some(f => siPath.includes(f)) ||
                 siPath.endsWith(".siyuan.sy")) continue;
