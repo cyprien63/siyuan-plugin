@@ -56,6 +56,8 @@ import { SyncProgressUI, showDiffDialog } from "./ui";
 import { HistoryDialog } from "./history";
 import { t, setLocale, availableLocales, getLocale, langs } from "./i18n";
 
+const CHUNK_SIZE = 200;
+
 export default class GitHubSyncPlugin extends Plugin {
 	private obfuscateRemotePath(originalPath: string): string {
 		if (this.removeEncryption || !this.config.encryptionPassword)
@@ -804,15 +806,24 @@ export default class GitHubSyncPlugin extends Plugin {
 		const treeMap = new Map<string, any>();
 		for (const tEnter of treeItems) treeMap.set(tEnter.path, tEnter);
 		const dedupedTreeItems = [...treeMap.values()];
-		const CHUNK_SIZE = 400;
 		for (let i = 0; i < dedupedTreeItems.length; i += CHUNK_SIZE) {
 			const chunk = dedupedTreeItems.slice(i, i + CHUNK_SIZE);
-			const treeRes = await api.createTree(currentTreeSha, chunk);
-			if (!treeRes.ok) {
-				const errText = await treeRes.text();
-				throw new Error(
-					`[GitHub Sync] Tree creation failed: ${treeRes.statusText} - ${errText}`,
-				);
+			let treeRes: Response | undefined;
+			let attempts = 0;
+			const maxAttempts = 5;
+			while (attempts < maxAttempts) {
+    treeRes = await api.createTree(currentTreeSha, chunk);
+    if (treeRes.ok) break;
+    if (treeRes.status >= 500) {
+        attempts++;
+        await sleep(attempts * 5000);
+    } else {
+        break;
+    }
+			}
+			if (!treeRes || !treeRes.ok) {
+    const errText = (await treeRes?.text()) || "Unknown API Error";
+    throw new Error(`[GitHub Sync] Tree creation failed (Chunk ${Math.floor(i / CHUNK_SIZE) + 1}): ${treeRes?.statusText} - ${errText}`);
 			}
 			const treeData = await treeRes.json();
 			currentTreeSha = treeData.sha;
@@ -1425,7 +1436,6 @@ export default class GitHubSyncPlugin extends Plugin {
 			const baseTreeRes = await api.getCommit(lastCommitSha);
 			const baseTreeData = await baseTreeRes.json();
 			let currentTreeSha = baseTreeData.tree.sha;
-			const CHUNK_SIZE = 400;
 
 			// Deduplicate entries by path (a generated manifest and a stray local
 			// file can otherwise collide and make Git RPC fail with BadObjectState)
@@ -1652,7 +1662,6 @@ export default class GitHubSyncPlugin extends Plugin {
 			);
 			await sleep(2000);
 			let currentTreeSha = "";
-			const CHUNK_SIZE = 100;
 
 			for (let i = 0; i < treeItems.length; i += CHUNK_SIZE) {
 				const chunk = treeItems.slice(i, i + CHUNK_SIZE);
@@ -1834,10 +1843,10 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 
 			// 2. Download and write the changed files concurrently in batches
-			const CHUNK_SIZE = 5;
+			const CHUNK_SIZE_PULL = 5;
 
-			for (let i = 0; i < toPull.length; i += CHUNK_SIZE) {
-				const chunk = toPull.slice(i, i + CHUNK_SIZE);
+			for (let i = 0; i < toPull.length; i += CHUNK_SIZE_PULL) {
+				const chunk = toPull.slice(i, i + CHUNK_SIZE_PULL);
 
 				this.updateProgress(
 					10 + Math.round((i / toPull.length) * 80),
@@ -1880,9 +1889,6 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 
 			// 3. Process Plugins, Widgets, and Themes manifest files
-			let pluginsInstalled = 0;
-			let widgetsInstalled = 0;
-			let themesInstalled = 0;
 			const onProgress = (pct: number, status: string, details: string) => this.updateProgress(pct, status, details);
 
 			const manifestItem = remoteItems.find(i => i.path === PLUGIN_MANIFEST_PATH);

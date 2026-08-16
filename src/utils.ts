@@ -73,8 +73,8 @@ export function friendlyError(err: unknown): string {
 		return t("error.rate_limit");
 	if (msg.includes("aborted") || msg.includes("timeout"))
 		return t("error.request_aborted");
-	if (msg.includes("size") || msg.includes("large"))
-		return t("error.file_too_large");
+	//if (msg.includes("size") || msg.includes("large"))
+	//	return t("error.file_too_large");
 	return `  ${sanitizeForDisplay(raw)}`;
 }
 

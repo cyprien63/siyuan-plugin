@@ -1,6 +1,6 @@
 {
   "name": "siyuan-github-sync",
-  "author": "Cyprien63",
+  "author": "Cyprien63 & Luizo",
   "url": "https://github.com/cyprien63/siyuan-plugin",
   "version": "4.0.0",
   "minAppVersion": "3.6.4",
@@ -31,7 +31,8 @@
   },
   "funding": {
     "custom": [
-      "https://paypal.me/CyprienPisicchio"
+      "https://paypal.me/CyprienPisicchio",
+      "https://paypal.me/luizooo"
     ]
   },
   "keywords": [
