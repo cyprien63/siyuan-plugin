@@ -1,3 +1,10 @@
+/**
+ * Commit-history dialog.
+ *
+ * Displays the last 30 commits of the synced repository inside a SiYuan
+ * `Dialog`. Each row shows the short SHA, message, author and date, with a
+ * "Restore" button that calls back into the plugin to restore that commit.
+ */
 import { Dialog, showMessage } from "siyuan";
 import { t } from "./i18n";
 
@@ -5,6 +12,10 @@ export class HistoryDialog {
 	private dialog: Dialog;
 	private listEl: HTMLElement;
 
+	/**
+	 * @param getHistory      Fetches the commit list (async).
+	 * @param restoreCommit   Restores a commit by SHA + message (async).
+	 */
 	constructor(
 		private getHistory: () => Promise<any[]>,
 		private restoreCommit: (sha: string, msg: string) => Promise<void>,
@@ -31,9 +42,11 @@ export class HistoryDialog {
 		this.dialog.element
 			.querySelector("#history-close")
 			.addEventListener("click", () => this.dialog.destroy());
+		// Kick off the initial load as soon as the dialog is created.
 		this.load();
 	}
 
+	/** Fetch and render the commit list inside the dialog. */
 	private async load() {
 		this.listEl.innerHTML = `<div style="text-align:center;padding:32px;color:var(--b3-theme-on-background);">${t("history.loading")}</div>`;
 		try {
@@ -62,6 +75,8 @@ export class HistoryDialog {
                 `;
 			}
 			this.listEl.innerHTML = html;
+			// Wire the restore buttons: disable them while the restore runs so
+			// a double-click cannot trigger two restores at once.
 			this.listEl.querySelectorAll(".restore-btn").forEach((btn) => {
 				btn.addEventListener("click", async (e) => {
 					const el = e.currentTarget as HTMLElement;
@@ -86,6 +101,10 @@ export class HistoryDialog {
 		}
 	}
 
+	/**
+	 * Escape HTML-special characters before injecting commit messages into the
+	 * dialog markup (messages are user-authored, so this prevents XSS).
+	 */
 	private escapeHtml(s: string): string {
 		return s.replace(
 			/[&<>"']/g,

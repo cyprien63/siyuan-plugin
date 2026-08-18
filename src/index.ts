@@ -1,3 +1,28 @@
+/**
+ * GitHub Sync — main plugin class.
+ *
+ * This is the entry point of the plugin. It wires together the GitHub REST
+ * client (`GitHubAPI`), the SiYuan file APIs (`siyuan-api`), the encryption
+ * helpers (`crypto`) and the UI dialogs, and exposes three actions in the
+ * top bar:
+ *
+ *   - Smart Push   : 3-way merge (local / remote / last-known state), then
+ *                    upload changed blobs, build a git tree, commit and move
+ *                    the branch pointer.
+ *   - Smart Pull   : download changed remote blobs into the workspace,
+ *                    install missing plugins/widgets/themes from the
+ *                    marketplace and restore notebook names.
+ *   - History      : list the last commits and restore any of them.
+ *
+ * Key concepts used throughout this file:
+ *   - Path obfuscation: when encryption is on, real paths are base64-encoded
+ *     under `data/enc/<b64>` so filenames stay private on the remote.
+ *   - The state ledger (`SYNCED_STATE_KEY`): stores, per file, a
+ *     `plaintextSha:remoteSha` pair used by the 3-way merge to distinguish
+ *     local changes from remote changes.
+ *   - Manifests (plugins/widgets/themes/notebooks) are generated locally and
+ *     pushed next to the data instead of syncing raw folders.
+ */
 import { Plugin, Setting, Dialog, showMessage } from "siyuan";
 import "./index.scss";
 import {
@@ -56,9 +81,18 @@ import { SyncProgressUI, showDiffDialog } from "./ui";
 import { HistoryDialog } from "./history";
 import { t, setLocale, availableLocales, getLocale, langs } from "./i18n";
 
+/** Number of tree entries sent to GitHub per `createTree` request (chunking). */
 const CHUNK_SIZE = 200;
 
 export default class GitHubSyncPlugin extends Plugin {
+	/**
+	 * Obfuscate a real workspace path for the remote repository.
+	 *
+	 * With encryption enabled, every path is base64-encoded and stored under
+	 * `data/enc/<base64(path)>` so notebook names and folder structures stay
+	 * private. Manifests (plugins/widgets/themes/notebooks) are exempt because
+	 * they must stay addressable by other flows.
+	 */
 	private obfuscateRemotePath(originalPath: string): string {
 		if (this.removeEncryption || !this.config.encryptionPassword)
 			return originalPath;
@@ -74,6 +108,11 @@ export default class GitHubSyncPlugin extends Plugin {
 		return `${SYNC_ROOT}/enc/${encoded}`;
 	}
 
+	/**
+	 * Reverse of {@link obfuscateRemotePath}: turn a `data/enc/...` remote path
+	 * back into the real workspace path. Non-obfuscated paths pass through
+	 * unchanged; malformed base64 falls back to the raw path.
+	 */
 	private deobfuscateRemotePath(remotePath: string): string {
 		const prefix = `${SYNC_ROOT}/enc/`;
 		if (remotePath.startsWith(prefix)) {
@@ -88,8 +127,11 @@ export default class GitHubSyncPlugin extends Plugin {
 	}
 
 	private config: GitHubConfig = { ...DEFAULT_CONFIG };
+	/** Currently running operation ("push"/"pull"), or null when idle. */
 	private activeTask: "push" | "pull" | null = null;
+	/** Progress UI instance currently on screen, if any. */
 	private currentUI: SyncProgressUI | null = null;
+	/** Latest progress state, persisted so re-opening the dialog restores it. */
 	private lastProgress = {
 		percent: 0,
 		status: t("status.initializing"),
@@ -98,15 +140,30 @@ export default class GitHubSyncPlugin extends Plugin {
 		error: false,
 		message: "",
 	};
+	/** The status-bar element showing the last sync date, or null. */
 	private statusBarEl: HTMLElement | null = null;
 
 	// Add this variable directly above the method
+	/**
+	 * Cache of the key-derivation promise, keyed by the password it was
+	 * derived from. Recomputing keys is expensive (Argon2/PBKDF2), so the
+	 * result is reused until the password changes.
+	 */
 	private keysCache: { password?: string; promise: Promise<CryptoKey[] | null> } | null = null;
 
-	// When true, the plugin re-pushes the whole repo WITHOUT encryption (used by
-	// the "remove encryption" flow). No new write will be encrypted while set.
+	/**
+	 * When true, the plugin re-pushes the whole repo WITHOUT encryption (used by
+	 * the "remove encryption" flow). No new write will be encrypted while set.
+	 */
 	private removeEncryption = false;
 
+	/**
+	 * Derive (and cache) the encryption keys for the current repository.
+	 *
+	 * Returns `null` when encryption is disabled or during the
+	 * remove-encryption re-push. Concurrent calls share a single promise so
+	 * the expensive derivation runs only once per password.
+	 */
 	private async deriveRepoKeys(): Promise<CryptoKey[] | null> {
     if (!this.config.encryptionPassword || this.removeEncryption) return null;
 
@@ -141,6 +198,7 @@ export default class GitHubSyncPlugin extends Plugin {
     return promise;
 	}
 
+	/** Encrypt content if encryption is enabled; otherwise return it as-is. */
 	private async maybeEncrypt(content: ArrayBuffer): Promise<ArrayBuffer> {
 		const keys = await this.deriveRepoKeys();
 		if (!keys || keys.length === 0) return content;
@@ -148,6 +206,11 @@ export default class GitHubSyncPlugin extends Plugin {
 		return encryptFile(content, keys[0]);
 	}
 
+	/**
+	 * Decrypt content if it looks encrypted (checks the `GSE1` magic header);
+	 * otherwise return it untouched. The hex snippet of the first bytes is
+	 * logged to make crypto debugging easier.
+	 */
 	private async maybeDecrypt(content: ArrayBuffer): Promise<ArrayBuffer> {
 		const keys = await this.deriveRepoKeys();
 		const snippet = Array.from(new Uint8Array(content).slice(0, 12))
@@ -168,6 +231,12 @@ export default class GitHubSyncPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * SiYuan lifecycle hook: runs when the plugin is loaded.
+	 *
+	 * Registers the top-bar icons (push / pull / history), loads the saved
+	 * configuration, registers the settings page and attaches the status bar.
+	 */
 	async onload() {
 		this.addIcons(
 			`<symbol id="iconGitHubUpload" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 13v-4H8l4-4 4 4h-3v4h-2z"/></symbol><symbol id="iconGitHubDownload" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 7v4h3l-4 4-4-4h3V9h2z"/></symbol><symbol id="iconGitHistory" viewBox="0 0 24 24"><path fill="currentColor" d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></symbol>`,
@@ -203,6 +272,7 @@ export default class GitHubSyncPlugin extends Plugin {
 	}
 
 	private attachToStatusBar() {
+		// Remove any stale element from a previous load before re-attaching.
 		const old = document.getElementById("siyuan-github-sync-status");
 		if (old) old.remove();
 		const tryAttach = (parent: Element) => {
@@ -214,11 +284,13 @@ export default class GitHubSyncPlugin extends Plugin {
 			parent.appendChild(this.statusBarEl);
 			return true;
 		};
+		// Prefer the "#statusBar #status" container; fall back to any element.
 		const target =
 			document.querySelector("#statusBar #status") ||
 			document.querySelector("#statusBar");
 		if (target && tryAttach(target)) return;
 
+		// Last-resort: a fixed overlay pinned to the bottom center of the screen.
 		this.statusBarEl = document.createElement("div");
 		this.statusBarEl.id = "siyuan-github-sync-status";
 		this.statusBarEl.style.cssText =
@@ -227,6 +299,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		document.body.appendChild(this.statusBarEl);
 	}
 
+	/** Render the "last sync" date/time into the status-bar element. */
 	private updateStatusBar() {
 		if (!this.statusBarEl) return;
 		const loaded = this.config.lastSync;
@@ -242,12 +315,20 @@ export default class GitHubSyncPlugin extends Plugin {
 		}
 	}
 
+	/** Persist the current timestamp as the last-sync date and refresh the bar. */
 	private async saveSyncTimestamp() {
 		this.config.lastSync = Date.now();
 		this.updateStatusBar();
 		await this.saveData(STORAGE_KEY, this.config);
 	}
 
+	/**
+	 * Build the plugin settings page.
+	 *
+	 * All input elements are captured in closures so the "Save" handler can
+	 * read their values without re-querying the DOM. The token and encryption
+	 * password fields have a show/hide eye toggle.
+	 */
 	private registerSettings() {
 		const uIn = this.mkInput(t("setting.github_user"), this.config.username);
 		const rIn = this.mkInput(t("setting.github_repo"), this.config.repo);
@@ -262,6 +343,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		t_Toggle.className = "b3-button b3-button--outline";
 		t_Toggle.style.cssText = "margin-left:8px;padding:4px 8px;font-size:14px;";
 		t_Toggle.textContent = "👁️";
+		// Toggle the token field between password and plain-text visibility.
 		t_Toggle.onclick = () => {
 			if (tIn.type === "password") {
 				tIn.type = "text";
@@ -286,6 +368,8 @@ export default class GitHubSyncPlugin extends Plugin {
 		const tBtn = document.createElement("button");
 		tBtn.className = "b3-button b3-button--outline fn__block";
 		tBtn.textContent = t("button.test_github");
+		// Test the connection: create an API client from the current field values
+		// and show an OK / Error toast accordingly.
 		tBtn.onclick = async () => {
 			tBtn.disabled = true;
 			const api = new GitHubAPI(tIn.value.trim(), uIn.value, rIn.value);
@@ -306,6 +390,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		pToggle.className = "b3-button b3-button--outline";
 		pToggle.style.cssText = "margin-left:8px;padding:4px 8px;font-size:14px;";
 		pToggle.textContent = "👁️";
+		// Toggle the encryption-password field visibility.
 		pToggle.onclick = () => {
 			if (pIn.type === "password") {
 				pIn.type = "text";
@@ -319,6 +404,8 @@ export default class GitHubSyncPlugin extends Plugin {
 		const eBtn = document.createElement("button");
 		eBtn.className = "b3-button b3-button--outline fn__block";
 		eBtn.textContent = t("button.export");
+		// Export the current settings to a downloadable JSON file. Warns the
+		// user because the file contains the token / Groq key / password.
 		eBtn.onclick = () => {
 			const hasToken = !!tIn.value.trim();
 			const hasGroq = !!gIn.value.trim();
@@ -358,6 +445,8 @@ export default class GitHubSyncPlugin extends Plugin {
 		const iBtn = document.createElement("button");
 		iBtn.className = "b3-button b3-button--outline fn__block";
 		iBtn.textContent = t("button.import");
+		// Import settings from a previously exported JSON file and fill the
+		// input fields. The user must press Save afterwards to persist them.
 		iBtn.onclick = () => {
 			const fi = document.createElement("input");
 			fi.type = "file";
@@ -409,6 +498,8 @@ export default class GitHubSyncPlugin extends Plugin {
 		btnRow.appendChild(eBtn);
 		btnRow.appendChild(iBtn);
 
+		// "Forget password" triggers the remove-encryption flow: it re-pushes
+		// the whole repository in cleartext and deletes the old encrypted blobs.
 		const forgetBtn = document.createElement("button");
 		forgetBtn.className = "b3-button b3-button--outline fn__block";
 		forgetBtn.title = t("hint.remove_encryption");
@@ -435,6 +526,8 @@ export default class GitHubSyncPlugin extends Plugin {
 			},
 		});
 
+		// Language selector: switches the locale immediately (applied to newly
+		// rendered strings; a restart is recommended for full coverage).
 		const langSelect = document.createElement("select");
 		langSelect.className = "b3-select fn__block";
 		const _langLabels: Record<string, string> = langs;
@@ -497,6 +590,13 @@ export default class GitHubSyncPlugin extends Plugin {
 		});
 	}
 
+	/**
+	 * Open the "remove encryption" confirmation dialog.
+	 *
+	 * Requires the current password: the whole repository is re-pushed in
+	 * cleartext and the old encrypted blobs are deleted. Refuses to run while
+	 * another task is active.
+	 */
 	private removeEncryptionWithPassword(pIn: HTMLInputElement) {
 		if (this.activeTask) {
 			showMessage(t("action.push"), 4000, "error");
@@ -519,6 +619,8 @@ export default class GitHubSyncPlugin extends Plugin {
 		});
 		const pwdEl = dialog.element.querySelector<HTMLInputElement>('#remove-encryption-pwd');
 		dialog.element.querySelector('#remove-encryption-cancel').addEventListener("click", () => dialog.destroy());
+		// On confirm: validate the password is present, then hand over to the
+		// async re-push flow. The password field is cleared on success.
 		const confirm = async () => {
 			const oldPwd = pwdEl.value;
 			if (!oldPwd.trim()) {
@@ -536,12 +638,24 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 		};
 		dialog.element.querySelector('#remove-encryption-confirm').addEventListener("click", confirm);
+		// Allow confirming with the Enter key while focused on the field.
 		pwdEl.addEventListener("keydown", (e) => {
 			if (e.key === "Enter") confirm();
 		});
 		pwdEl.focus();
 	}
 
+	/**
+	 * Perform the actual "remove encryption" operation.
+	 *
+	 * Steps:
+	 *   1. Verify the old password against a real encrypted blob if any exists
+	 *      on the remote (deriving the keys and attempting a decrypt).
+	 *   2. Re-push the whole repository in cleartext via {@link rePushAllPlain}.
+	 *   3. Clear the password setting and delete the old encrypted blobs.
+	 *
+	 * Throws on failure; the caller shows the friendly error.
+	 */
 	private async removeEncryptionToPlain(oldPassword: string) {
 		if (!this.config.token) throw new Error(t("msg.configure_plugin"));
 		const api = new GitHubAPI(
@@ -606,6 +720,7 @@ export default class GitHubSyncPlugin extends Plugin {
 					t("progress.removing_encryption"),
 					t("progress.verifying_password"),
 				);
+				// Verify the supplied password by attempting a real decrypt.
 				const salt = await getDeterministicSalt(
 					this.config.username.trim(),
 					this.config.repo.trim(),
@@ -656,6 +771,20 @@ export default class GitHubSyncPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Re-push the whole repository in cleartext and remove every encrypted blob.
+	 *
+	 * Used exclusively by the remove-encryption flow (`removeEncryption` is
+	 * true while this runs, which disables path obfuscation and encryption).
+	 *
+	 * Steps:
+	 *   1. Emit delete entries for every `data/enc/*` blob in the remote tree.
+	 *   2. Reuse remote plaintext blobs whose SHA matches the local content,
+	 *      delete the rest.
+	 *   3. Upload every local file as a plaintext blob.
+	 *   4. Upload the (plaintext) manifests.
+	 *   5. Build the tree in chunks, commit, move the ref, save the ledger.
+	 */
 	private async rePushAllPlain(
 		api: GitHubAPI,
 		branch: string,
@@ -667,6 +796,8 @@ export default class GitHubSyncPlugin extends Plugin {
 			WIDGET_MANIFEST_PATH,
 			THEME_MANIFEST_PATH,
 		]);
+		// Gather local files, excluding the generated manifests (they are
+		// re-generated and uploaded separately in step 4).
 		const localFiles = (await collectDir(`/${SYNC_ROOT}`, SYNC_ROOT)).filter(
 			(f) =>
 				!generatedManifestPaths.has(f.githubPath) &&
@@ -720,6 +851,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				continue;
 			}
 			const content = await siYuanGetFile(localSi);
+			// Reuse the remote blob only when the local content has the same SHA.
 			if (
 				content &&
 				content.byteLength > 0 &&
@@ -784,6 +916,8 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 		}
 		for (const nm of notebookManifests) {
+			// `maybeEncrypt` returns the content as-is while removeEncryption is
+			// set, so notebook names are pushed in cleartext too.
 			const blobRes = await api.createBlob(
 				arrayBufferToBase64(await this.maybeEncrypt(nm.content)),
 			);
@@ -800,9 +934,12 @@ export default class GitHubSyncPlugin extends Plugin {
 
 		this.updateProgress(88, t("progress.cleaning_enc"), t("progress.creating_tree"));
 
+		// Build the tree in chunks on top of the previous tree SHA, retrying on
+		// transient server errors (5xx).
 		const baseTreeRes = await api.getCommit(lastCommitSha);
 		const baseTreeData = await baseTreeRes.json();
 		let currentTreeSha = baseTreeData.tree.sha;
+		// Deduplicate by path so a path can never appear twice in one tree call.
 		const treeMap = new Map<string, any>();
 		for (const tEnter of treeItems) treeMap.set(tEnter.path, tEnter);
 		const dedupedTreeItems = [...treeMap.values()];
@@ -849,6 +986,8 @@ export default class GitHubSyncPlugin extends Plugin {
 			);
 		}
 
+		// Rebuild the state ledger from the new plaintext tree: skip encrypted
+		// leftovers and the generated manifests (they are not part of the ledger).
 		const newFilesState: Record<string, string> = {};
 		for (const tEnter of treeItems) {
 			if (!tEnter.sha) continue;
@@ -866,6 +1005,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		await this.saveSyncedState(commitData.sha, newFilesState);
 	}
 
+	/** Create a SiYuan-styled text input (`b3-text-field`). */
 	private mkInput(ph: string, val: string, type = "text") {
 		const el = document.createElement("input");
 		el.className = "b3-text-field fn__block";
@@ -875,6 +1015,12 @@ export default class GitHubSyncPlugin extends Plugin {
 		return el;
 	}
 
+	/**
+	 * Top-bar "Push" click handler.
+	 *
+	 * If a pull is running, refuse (toast). If a push is already running, just
+	 * re-show its progress dialog; otherwise start a new push.
+	 */
 	private handlePushClick() {
 		if (this.activeTask === "pull") {
 			showMessage(t("action.push"));
@@ -887,6 +1033,9 @@ export default class GitHubSyncPlugin extends Plugin {
 		this.pushToGitHub();
 	}
 
+	/**
+	 * Top-bar "Pull" click handler (mirror of {@link handlePushClick}).
+	 */
 	private handlePullClick() {
 		if (this.activeTask === "push") {
 			showMessage(t("action.pull"));
@@ -899,6 +1048,13 @@ export default class GitHubSyncPlugin extends Plugin {
 		this.pullFromGitHub();
 	}
 
+	/**
+	 * Show (or refresh) the progress dialog for a push/pull operation.
+	 *
+	 * If a dialog is already visible, it is re-synced with the stored progress
+	 * state instead of creating a second dialog. This lets the user re-open
+	 * the progress window while a long operation is still running.
+	 */
 	private showProgressUI(type: "push" | "pull") {
 		if (this.currentUI && !this.currentUI.isDestroyed) {
 			// If the UI is already visible, just update it with the current state
@@ -938,11 +1094,13 @@ export default class GitHubSyncPlugin extends Plugin {
 		}
 	}
 
+	/** Store progress state and push it to the dialog if one is open. */
 	private updateProgress(percent: number, status: string, details: string) {
 		this.lastProgress = { ...this.lastProgress, percent, status, details };
 		if (this.currentUI) this.currentUI.update(percent, status, details);
 	}
 
+	/** Load the persisted sync-state ledger (or `null` if none was saved). */
 	private async loadSyncedState(): Promise<{
 		commitSha: string;
 		files: Record<string, string>;
@@ -955,6 +1113,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		}
 	}
 
+	/** Persist the sync-state ledger for a given commit SHA. */
 	private async saveSyncedState(
 		commitSha: string,
 		files: Record<string, string>,
@@ -962,6 +1121,24 @@ export default class GitHubSyncPlugin extends Plugin {
 		await this.saveData(SYNCED_STATE_KEY, { commitSha, files });
 	}
 
+	/**
+	 * Compute the 3-way merge plan before a push.
+	 *
+	 * For every local file, its SHA is compared against:
+	 *   - `localSynced`  : the plaintext SHA recorded at the last sync,
+	 *   - `remoteSha`    : the current SHA on the remote,
+	 *   - `remoteSynced` : the remote SHA recorded at the last sync.
+	 *
+	 * Outcome per file:
+	 *   - identical everywhere              -> `toReuse`
+	 *   - missing remote or missing ledger  -> `toUpload` (repairs stale state)
+	 *   - local changed, remote unchanged   -> `toUpload`
+	 *   - remote changed, local unchanged   -> `toPull`
+	 *   - both changed                      -> `conflicted`
+	 *
+	 * Remote-only files are classified as `toDelete` (if they are in the
+	 * ledger, i.e. locally deleted) or `toPull` (new remote files).
+	 */
 	private async mergeBeforePush(
 		localFiles: FileToSync[],
 		remoteMap: Map<string, string>,
@@ -996,6 +1173,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			const remoteSha = remoteMap.get(f.githubPath);
 			const syncedRaw = syncedFiles[f.githubPath];
 
+			// The ledger stores a "localSha:remoteSha" pair; split it back out.
 			let localSynced = syncedRaw;
 			let remoteSynced = syncedRaw;
 			if (syncedRaw && syncedRaw.includes(":")) {
@@ -1047,6 +1225,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			THEME_MANIFEST_PATH,
 		]);
 
+		// Classify remote-only files (within SYNC_ROOT, not manifests).
 		for (const [path] of remoteMap) {
 			if (
 				path.startsWith(SYNC_ROOT) &&
@@ -1066,6 +1245,17 @@ export default class GitHubSyncPlugin extends Plugin {
 		return plan;
 	}
 
+	/**
+	 * Full push pipeline:
+	 *
+	 *   1. Require a token, mark the task as active and show the UI.
+	 *   2. Collect local files and generate all manifests.
+	 *   3. Fetch the remote ref/tree; seed the repo if it has no commits.
+	 *   4. Verify the encryption password if an encrypted blob exists remotely.
+	 *   5. Run the 3-way merge and (if enabled) show the diff dialog.
+	 *   6. Upload changed blobs (encrypted), build the tree, commit, move ref.
+	 *   7. Update the state ledger and show a summary toast.
+	 */
 	private async pushToGitHub() {
 		if (!this.config.token) return showMessage(t("msg.configure_plugin"));
 		this.activeTask = "push";
@@ -1134,11 +1324,15 @@ export default class GitHubSyncPlugin extends Plugin {
 				lastCommitSha = refData.object.sha;
 				const lastCommit = await (await api.getCommit(lastCommitSha)).json();
 				const remoteTree = await api.getRemoteTree(lastCommit.tree.sha);
+				// Track the exact remote paths present, needed to emit safe
+				// deletions (GitHub rejects deleting a file that does not exist).
 				remoteTree.forEach((item) => {
 					if (item.type === "blob") actualRemotePathSet.add(item.path);
 				});
 
 				// --- verification block ---
+				// If any encrypted blob exists on the remote, make sure the
+				// current password can decrypt it before uploading anything new.
 				const verifyNode = remoteTree.find(
 					(i: any) =>
 						i.type === "blob" &&
@@ -1157,6 +1351,8 @@ export default class GitHubSyncPlugin extends Plugin {
 				}
 				// -----------------------------------
 
+				// Build a path -> remote-SHA map, de-obfuscating `data/enc/...`
+				// paths so the merge operates on real workspace paths.
 				remoteTree.forEach((item) => {
 					if (item.type === "blob") {
 						const orig = this.deobfuscateRemotePath(item.path);
@@ -1172,6 +1368,8 @@ export default class GitHubSyncPlugin extends Plugin {
 				lastCommitSha || "",
 			);
 
+			// Detect whether any generated manifest changed on the remote, which
+			// forces a commit even if the 3-way merge found no file changes.
 			const remoteManifestSha = remoteMap.get(PLUGIN_MANIFEST_PATH);
 			const manifestChanged = remoteManifestSha !== manifestSha;
 			const remoteWidgetManifestSha = remoteMap.get(WIDGET_MANIFEST_PATH);
@@ -1190,6 +1388,8 @@ export default class GitHubSyncPlugin extends Plugin {
 				}
 			}
 
+			// Remote files marked as `toPull` by the merge are downloaded and
+			// written locally BEFORE the push proceeds, then reused on the tree.
 			for (const pull of plan.toPull) {
 				const pullSha = remoteMap.get(pull.githubPath);
 				if (pullSha) {
@@ -1206,6 +1406,8 @@ export default class GitHubSyncPlugin extends Plugin {
 				});
 			}
 
+			// Short-circuit: nothing to upload/delete and no manifest changed
+			// means there is nothing to commit — just refresh the ledger.
 			const totalChanges = plan.toUpload.length + plan.toDelete.length;
 			if (
 				totalChanges === 0 &&
@@ -1234,6 +1436,8 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 
 			if (!lastCommitSha) {
+				// First push ever: show the diff dialog if enabled, then delegate
+				// to the initial-commit flow.
 				if (this.config.showDiff) {
 					const ok = await showDiffDialog(plan);
 					if (!ok) {
@@ -1271,6 +1475,8 @@ export default class GitHubSyncPlugin extends Plugin {
 			]);
 			notebookManifests.forEach((nm) => manifestPathSet.add(nm.githubPath));
 
+			// Reused blobs keep their existing remote SHA (manifests excluded
+			// from obfuscation).
 			for (const r of plan.toReuse) {
 				const remotePath = manifestPathSet.has(r.githubPath)
 					? r.githubPath
@@ -1284,6 +1490,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 
 			const uploadedSummaries: { path: string; content: string }[] = [];
+			// Upload every changed file as a (possibly encrypted) blob.
 			for (let i = 0; i < plan.toUpload.length; i++) {
 				const u = plan.toUpload[i];
 				this.updateProgress(
@@ -1352,6 +1559,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				t("progress.upload_plugin_manifest"),
 				PLUGIN_MANIFEST_PATH,
 			);
+			// Upload the three generated manifests as plaintext blobs.
 			const manifestBlobRes = await api.createBlob(
 				arrayBufferToBase64(pluginManifest.content),
 			);
@@ -1443,6 +1651,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			for (const t of treeItems) treeMap.set(t.path, t);
 			const dedupedTreeItems = [...treeMap.values()];
 
+			// Create the tree in chunks, each chunk based on the previous one.
 			for (let i = 0; i < dedupedTreeItems.length; i += CHUNK_SIZE) {
 				const chunk = dedupedTreeItems.slice(i, i + CHUNK_SIZE);
 				const treeRes = await api.createTree(currentTreeSha, chunk);
@@ -1465,6 +1674,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				this.config.groqKey,
 				uploadedSummaries,
 			);
+			// Prefer the AI-generated message; fall back to a stat summary.
 			const commitMsg =
 				aiMsg ||
 				`Sync : +${plan.toUpload.length}, ~${plan.toReuse.length}, -${plan.toDelete.length},  ${plan.toPull.length} pull(s)`;
@@ -1496,6 +1706,8 @@ export default class GitHubSyncPlugin extends Plugin {
 			const oldState = await this.loadSyncedState();
 			const oldSyncedFiles = oldState?.files || {};
 
+			// Rebuild the ledger for the new commit. Reused files keep their
+			// old ledger value; uploaded files store `plaintextSha:remoteSha`.
 			const newFilesState: Record<string, string> = {};
 			for (const r of plan.toReuse) {
 				newFilesState[r.githubPath] = oldSyncedFiles[r.githubPath] || r.sha;
@@ -1514,6 +1726,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 			await this.saveSyncedState(commitData.sha, newFilesState);
 
+			// Build the human-readable summary toast.
 			const parts: string[] = [];
 			if (plan.toUpload.length)
 				parts.push(`${plan.toUpload.length} ${t("stat.sent")}`);
@@ -1555,6 +1768,13 @@ export default class GitHubSyncPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Perform the very first push of an empty repository.
+	 *
+	 * Uploads every planned file plus the manifests, then creates a tree
+	 * (chunked, with 5xx retries), a root commit and finally the branch ref.
+	 * Also records upload errors so the summary can report them.
+	 */
 	private async pushInitialCommit(
 		plan: MergePlan,
 		branch: string,
@@ -1611,6 +1831,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		}
 
 		for (const m of [pluginManifest, widgetManifest, themeManifest]) {
+			// Manifests are always pushed as plaintext blobs.
 			let content = m.content;
 			const mRes = await api.createBlob(arrayBufferToBase64(content));
 			if (mRes.ok) {
@@ -1660,9 +1881,12 @@ export default class GitHubSyncPlugin extends Plugin {
 				t("progress.finalizing"),
 				t("progress.creating_tree"),
 			);
+			// Give GitHub a moment to persist the uploaded blobs before
+			// referencing them in tree creation.
 			await sleep(2000);
 			let currentTreeSha = "";
 
+			// Build the tree chunk by chunk, retrying transient 5xx failures.
 			for (let i = 0; i < treeItems.length; i += CHUNK_SIZE) {
 				const chunk = treeItems.slice(i, i + CHUNK_SIZE);
 				let treeRes: Response | undefined;
@@ -1690,6 +1914,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				await sleep(2000);
 			}
 
+			// Create the root commit (no parents) and point the branch at it.
 			const commitRes = await api.createCommit("Sync init", currentTreeSha, []);
 			if (!commitRes.ok) {
 				const errText = await commitRes.text();
@@ -1706,6 +1931,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				);
 			}
 
+			// Seed the ledger from the freshly created tree.
 			const newFilesState: Record<string, string> = {};
 			treeItems.forEach((item) => {
 				const originalPath = this.deobfuscateRemotePath(item.path);
@@ -1714,6 +1940,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			await this.saveSyncedState(commitData.sha, newFilesState);
 		}
 
+		// Build the summary (uploaded count + any recorded errors).
 		let msg = t("msg.push_initial_done").replace("{n}", String(uploaded));
 		if (errors > 0) {
 			msg += " ⚠️ " + errors + " erreur(s).";
@@ -1728,6 +1955,19 @@ export default class GitHubSyncPlugin extends Plugin {
 		if (this.currentUI) this.currentUI.finish(msg);
 	}
 
+	/**
+	 * Full pull pipeline:
+	 *
+	 *   1. Require a token, mark the task as active and show the UI.
+	 *   2. Fetch the remote ref/tree; abort cleanly if the repo is empty.
+	 *   3. Diff remote blobs against the ledger + local content, keeping only
+	 *      the files that actually changed.
+	 *   4. Download the changed blobs (concurrently, in small batches),
+	 *      decrypt them and write them into the workspace; update the ledger.
+	 *   5. Restore notebook names, install missing plugins/widgets/themes.
+	 *   6. Delete local files that no longer exist on the remote.
+	 *   7. Refresh the file-tree and reload the UI.
+	 */
 	private async pullFromGitHub() {
 		if (!this.config.token) return showMessage(t("msg.configure_plugin")); //[cite: 2]
 		this.activeTask = "pull";
@@ -1768,6 +2008,8 @@ export default class GitHubSyncPlugin extends Plugin {
 
 			const remoteItems = (await api.getRemoteTree(lastCommit.tree.sha)).filter(
 				(i) => {
+					// Only sync blob entries under the sync root, and drop the
+					// excluded top-level folders (plugins, storage, conf, ...).
 					if (i.type !== "blob") return false;
 					const p = i.path;
 					if (p.startsWith("data/")) {
@@ -1784,7 +2026,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			const syncedFiles = syncedState?.files || {};
 			let stateUpdated = false;
 
-			// Batch optimizer
+			// Batch optimizer:
 			// 1. Pre-filter files to find exactly what needs downloading (Runs instantly in memory)
 			const toPull = [];
 			for (let i = 0; i < remoteItems.length; i++) {
@@ -1798,6 +2040,7 @@ export default class GitHubSyncPlugin extends Plugin {
 
 				let siPath = `/${originalPath}`;
 
+				// Skip locked / volatile files that must never be overwritten.
 				if (
 					LOCKED_EXTENSIONS.some((ext) => siPath.toLowerCase().endsWith(ext)) ||
 					siPath.includes("/temp/") ||
@@ -1857,6 +2100,7 @@ export default class GitHubSyncPlugin extends Plugin {
 						.slice(0, 50) + "...",
 				);
 
+				// Download up to 5 blobs in parallel, decrypt and write each one.
 				await Promise.all(
 					chunk.map(async ({ item, siPath, originalPath }) => {
 						const content = await api.downloadBlob(item.sha);
@@ -1880,6 +2124,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				await sleep(30);
 			}
 
+			// Restore notebook display names from their manifests (best-effort).
 			try {
 				await processNotebookManifests(remoteItems, api, (buf) =>
 					this.maybeDecrypt(buf),
@@ -1889,6 +2134,8 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 
 			// 3. Process Plugins, Widgets, and Themes manifest files
+			// Download each manifest, parse it, and install the packages that
+			// are missing locally.
 			const onProgress = (pct: number, status: string, details: string) => this.updateProgress(pct, status, details);
 
 			const manifestItem = remoteItems.find(i => i.path === PLUGIN_MANIFEST_PATH);
@@ -1925,6 +2172,8 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 
 			// 4. Remove local files that no longer exist on the remote
+			// Build a set of all "plaintext" remote paths (de-obfuscated) to
+			// compare against the ledger.
 			const remotePlainSet = new Set<string>();
 			for (const item of remoteItems) {
 				if (item.path.startsWith(`${SYNC_ROOT}/enc/`)) {
@@ -1936,9 +2185,11 @@ export default class GitHubSyncPlugin extends Plugin {
 
 			let deleted = 0;
 			for (const localPath of Object.keys(syncedFiles)) {
+				// Keep any file still present on the remote.
 				if (remotePlainSet.has(localPath)) continue;
 
 				const lower = localPath.toLowerCase();
+				// Never delete locked/volatile files.
 				if (LOCKED_EXTENSIONS.some((ext) => lower.endsWith(ext))) continue;
 				if (
 					localPath.includes("/temp/") ||
@@ -1950,6 +2201,7 @@ export default class GitHubSyncPlugin extends Plugin {
 					localPath.endsWith(`/${NOTEBOOK_MANIFEST_FILE}`)
 				)
 					continue;
+				// Plugins are managed through their manifest, never deleted here.
 				if (localPath.startsWith(`${SYNC_ROOT}/plugins/`)) continue;
 
 				this.updateProgress(
@@ -1970,6 +2222,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				await this.saveSyncedState(lastCommit.sha, syncedFiles);
 			}
 
+			// Refresh the file tree so SiYuan picks up the new/changed files.
 			if (deleted > 0 || stateUpdated) {
 				await siYuanRefreshFiletree();
 			}
@@ -1988,6 +2241,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 			await this.saveSyncTimestamp();
 
+			// A reload makes SiYuan rebuild its indexes from the new files.
 			setTimeout(() => window.location.reload(), 1500);
 		} catch (e) {
 			this.lastProgress = {
@@ -2002,6 +2256,13 @@ export default class GitHubSyncPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Restore the workspace to the state of a given commit.
+	 *
+	 * Fetches the commit's tree, downloads every blob under the sync root
+	 * (except the plugin's own folder), decrypts and writes them, then refreshes
+	 * the file-tree and the ledger.
+	 */
 	async restoreCommit(sha: string, message: string) {
 		const api = new GitHubAPI(
 			this.config.token,
@@ -2023,6 +2284,7 @@ export default class GitHubSyncPlugin extends Plugin {
 
 		let updated = 0;
 		for (const item of blobs) {
+			// De-obfuscate encrypted paths back to real workspace paths.
 			let siPath = `/${item.path}`;
 			if (item.path.startsWith(`${SYNC_ROOT}/enc/`)) {
 				siPath = `/${this.deobfuscateRemotePath(item.path)}`;
@@ -2032,6 +2294,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				continue;
 			}
 
+			// Skip the same locked/volatile files as the pull flow.
 			if (
 				LOCKED_EXTENSIONS.some((ext) => siPath.toLowerCase().endsWith(ext)) ||
 				siPath.includes("/temp/") ||
@@ -2056,6 +2319,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		}
 		await siYuanRefreshFiletree();
 
+		// Restore notebook names too (best-effort).
 		try {
 			await processNotebookManifests(treeItems, api, (buf) =>
 				this.maybeDecrypt(buf),
@@ -2064,6 +2328,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			/* ignore */
 		}
 
+		// Rebuild the ledger from the restored tree.
 		const newFilesState: Record<string, string> = {};
 		treeItems.forEach((item) => {
 			if (item.type === "blob") newFilesState[item.path] = item.sha;
@@ -2079,6 +2344,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		await this.saveSyncTimestamp();
 	}
 
+	/** Top-bar "History" click handler: require a token, then open the dialog. */
 	private async handleHistoryClick() {
 		if (!this.config.token) return showMessage(t("msg.configure_plugin"));
 		new HistoryDialog(
@@ -2087,6 +2353,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		);
 	}
 
+	/** Fetch the commit history (used by {@link HistoryDialog}). */
 	async getHistory(): Promise<any[]> {
 		const api = new GitHubAPI(
 			this.config.token,

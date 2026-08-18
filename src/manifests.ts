@@ -1,3 +1,17 @@
+/**
+ * Manifest generation and marketplace installation.
+ *
+ * The plugin does not sync raw plugin/widget/theme folders (they are excluded
+ * from the file walker). Instead, it pushes small generated manifests that
+ * list the installed packages with their versions:
+ *   - `data/plugin-manifest.json`  -> installed plugins
+ *   - `data/widget-manifest.json`  -> installed widgets
+ *   - `data/theme-manifest.json`   -> installed themes (+ active theme per mode)
+ *   - `data/<notebookId>/notebook.json` -> per-notebook display names
+ *
+ * On pull, the missing packages are re-installed from the official SiYuan
+ * marketplace using the `installSingle*` helpers.
+ */
 import {
 	PluginManifest,
 	PluginManifestEntry,
@@ -28,6 +42,12 @@ import { GitHubAPI } from "./github-api";
 import { sleep } from "./utils";
 import { t } from "./i18n";
 
+/**
+ * Read the locally installed plugins by scanning each plugin.json under `data/plugins`.
+ *
+ * The plugin itself (`PLUGIN_SELF_NAME`) is always excluded so the synced
+ * manifest never references the plugin that is doing the syncing.
+ */
 export async function collectInstalledPlugins(): Promise<PluginManifest> {
 	const entries = await siYuanReadDir(`${SYNC_ROOT}/plugins`);
 	const plugins: PluginManifestEntry[] = [];
@@ -50,6 +70,7 @@ export async function collectInstalledPlugins(): Promise<PluginManifest> {
 	return { plugins };
 }
 
+/** Build the plugin manifest file ready to be uploaded. */
 export async function generatePluginManifest(): Promise<ManifestFile> {
 	const manifest = await collectInstalledPlugins();
 	const json = JSON.stringify(manifest, null, 2);
@@ -57,6 +78,11 @@ export async function generatePluginManifest(): Promise<ManifestFile> {
 	return { githubPath: PLUGIN_MANIFEST_PATH, content };
 }
 
+/**
+ * Install every plugin listed in a remote manifest that is missing locally.
+ *
+ * @returns The number of plugins actually installed.
+ */
 export async function installMissingPlugins(
 	remoteManifest: PluginManifest,
 	onProgress?: (pct: number, status: string, details: string) => void,
@@ -83,6 +109,7 @@ export async function installMissingPlugins(
 	return installed;
 }
 
+/** Read the locally installed widgets by scanning each widget.json under `data/widgets`. */
 export async function collectInstalledWidgets(): Promise<PluginManifest> {
 	const entries = await siYuanReadDir(`${SYNC_ROOT}/widgets`);
 	const plugins: PluginManifestEntry[] = [];
@@ -105,6 +132,7 @@ export async function collectInstalledWidgets(): Promise<PluginManifest> {
 	return { plugins };
 }
 
+/** Build the widget manifest file ready to be uploaded. */
 export async function generateWidgetManifest(): Promise<ManifestFile> {
 	const manifest = await collectInstalledWidgets();
 	const json = JSON.stringify(manifest, null, 2);
@@ -112,6 +140,11 @@ export async function generateWidgetManifest(): Promise<ManifestFile> {
 	return { githubPath: WIDGET_MANIFEST_PATH, content };
 }
 
+/**
+ * Install every widget listed in a remote manifest that is missing locally.
+ *
+ * @returns The number of widgets actually installed.
+ */
 export async function installMissingWidgets(
 	remoteManifest: PluginManifest,
 	onProgress?: (pct: number, status: string, details: string) => void,
@@ -136,6 +169,12 @@ export async function installMissingWidgets(
 	return installed;
 }
 
+/**
+ * Read the locally installed themes by scanning each theme.json under `conf/appearance/themes`.
+ *
+ * When `includeActive` is true, the currently active light/dark themes are
+ * also appended, so they can be re-applied on another device after a pull.
+ */
 export async function collectInstalledThemes(
 	includeActive = false,
 ): Promise<any> {
@@ -167,6 +206,7 @@ export async function collectInstalledThemes(
 	return result;
 }
 
+/** Build the theme manifest file ready to be uploaded. */
 export async function generateThemeManifest(): Promise<ManifestFile> {
 	const manifest = await collectInstalledThemes(true);
 	const json = JSON.stringify(manifest, null, 2);
@@ -174,6 +214,12 @@ export async function generateThemeManifest(): Promise<ManifestFile> {
 	return { githubPath: THEME_MANIFEST_PATH, content };
 }
 
+/**
+ * Install every theme listed in a remote manifest that is missing locally,
+ * then restore the previously active theme if any new theme was installed.
+ *
+ * @returns The number of themes actually installed.
+ */
 export async function installMissingThemes(
 	remoteManifest: any,
 	onProgress?: (pct: number, status: string, details: string) => void,
@@ -202,6 +248,8 @@ export async function installMissingThemes(
 		if (ok) installed++;
 		await sleep(200);
 	}
+	// Re-apply the theme that was active on the source device, so the look of
+	// the workspace is preserved across devices.
 	if (installed > 0) {
 		const restored = await getCurrentAppearance();
 		const currentMode = restored?.mode ?? 0;
@@ -214,6 +262,12 @@ export async function installMissingThemes(
 	return installed;
 }
 
+/**
+ * Collect every notebook together with its effective display name.
+ *
+ * The name is read from the notebook configuration, falling back to the raw
+ * notebook entry name when the config does not expose one.
+ */
 export async function collectNotebookManifests(): Promise<
 	NotebookManifestEntry[]
 > {
@@ -227,6 +281,12 @@ export async function collectNotebookManifests(): Promise<
 	return entries;
 }
 
+/**
+ * Build one notebook manifest per notebook (`data/<id>/notebook.json`).
+ *
+ * These tiny files store the display names so a pull can restore readable
+ * notebook titles (which are otherwise obfuscated along with the paths).
+ */
 export async function generateNotebookManifests(): Promise<ManifestFile[]> {
 	const notebooks = await collectNotebookManifests();
 	return notebooks.map((nb) => {
@@ -239,6 +299,15 @@ export async function generateNotebookManifests(): Promise<ManifestFile[]> {
 	});
 }
 
+/**
+ * Apply the notebook names found in remote manifests to the local notebooks.
+ *
+ * For every `data/<id>/notebook.json` blob found in the remote tree, the
+ * notebook is opened and its display name is set from the (decrypted) manifest
+ * content.
+ *
+ * @returns The number of notebooks whose name was restored.
+ */
 export async function processNotebookManifests(
 	remoteItems: GitHubTreeItem[],
 	github: GitHubAPI,

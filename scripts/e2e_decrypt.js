@@ -1,9 +1,25 @@
+/**
+ * E2E helper: fetch an encrypted blob from GitHub and decrypt it.
+ *
+ * Used to verify that a blob uploaded by the plugin (or by
+ * `e2e_upload_and_verify.js`) can be decrypted back with the same password.
+ *
+ * Arguments:
+ *   1. path to the JSON payload produced by `e2e_encrypt.js`
+ *   2. the blob SHA to download from GitHub
+ *
+ * Environment:
+ *   OWNER / REPO   repository coordinates (defaults to LuigiBrosNin/siyuan-workplace)
+ *   TOKEN          GitHub token (required)
+ *   E2E_PASSWORD   decryption password (default "e2e-test-password")
+ */
 const { webcrypto } = require('crypto');
 const scrypt = require('scrypt-js').scrypt;
 const fs = require('fs');
 
 function base64ToBytes(b64){ return Buffer.from(b64, 'base64'); }
 
+/** Derive the 32-byte AES key using the same scrypt parameters as the plugin. */
 async function deriveKeyScrypt(password, saltBytes){
   const pw = Buffer.from(password, 'utf8');
   const N = 16384, r = 8, p = 1, dkLen = 32;
@@ -11,6 +27,11 @@ async function deriveKeyScrypt(password, saltBytes){
   return Buffer.from(key);
 }
 
+/**
+ * Parse a `GSE1` blob and decrypt it.
+ *
+ * Layout: `GSE1` | version(1) | IV(12) | ciphertext.
+ */
 async function decrypt(encryptedBuf, password, saltBuf){
   const MAGIC = Buffer.from('GSE1');
   if (encryptedBuf.length < MAGIC.length + 1 + 12) throw new Error('invalid');

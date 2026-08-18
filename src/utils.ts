@@ -1,5 +1,18 @@
+/**
+ * Generic helpers shared across the plugin.
+ *
+ * This module groups small, dependency-light utilities: base64 conversion,
+ * git SHA-1 computation, error prettifying, text extraction from SiYuan files
+ * and the optional AI-powered commit message generation.
+ */
 import { getLocale, t } from "./i18n";
 
+/**
+ * Convert an ArrayBuffer to a base64 string.
+ *
+ * Chunked iteration avoids stack overflow on large buffers (calling
+ * `String.fromCharCode` with a huge spread would exceed the call-stack).
+ */
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
 	const bytes = new Uint8Array(buffer);
 	let bin = "";
@@ -12,14 +25,24 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
 	return btoa(bin);
 }
 
+/**
+ * Convert a base64 string back to an ArrayBuffer.
+ */
 export function base64ToArrayBuffer(b64: string): ArrayBuffer {
 	// Fortified regex to strip all whitespace, newlines, and carriage returns
+	// (GitHub's JSON responses are pretty-printed, which would corrupt atob).
 	const bin = atob(b64.replace(/[\r\n\s]+/g, ""));
 	const bytes = new Uint8Array(bin.length);
 	for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 	return bytes.buffer;
 }
 
+/**
+ * Compute the exact SHA-1 a real git blob would have for this content.
+ *
+ * Git hashes `"blob <size>\0<content>"`, so replicating that header here lets
+ * us compare local files against remote tree entries without a local git.
+ */
 export async function calculateGitSha(content: ArrayBuffer): Promise<string> {
 	const header = new TextEncoder().encode(`blob ${content.byteLength}\0`);
 	const combined = new Uint8Array(header.length + content.byteLength);
@@ -31,14 +54,25 @@ export async function calculateGitSha(content: ArrayBuffer): Promise<string> {
 		.join("");
 }
 
+/** Awaitable timeout that resolves after `ms` milliseconds. */
 export function sleep(ms: number): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Percent-encode each path segment individually.
+ *
+ * Encoding per segment (instead of the whole path) keeps the slashes intact
+ * so GitHub endpoints still receive a proper nested path.
+ */
 export function encodePath(path: string): string {
 	return path.split("/").map(encodeURIComponent).join("/");
 }
 
+/**
+ * Escape HTML-special characters so arbitrary user/file text can be injected
+ * safely into dialog HTML without XSS.
+ */
 export function sanitizeForDisplay(s: string): string {
 	return s.replace(
 		/[<>&"']/g,
@@ -49,6 +83,12 @@ export function sanitizeForDisplay(s: string): string {
 	);
 }
 
+/**
+ * Map a raw exception / fetch error to a human-friendly localized message.
+ *
+ * Heuristics are based on keywords commonly found in GitHub API errors and
+ * browser network exceptions; anything unknown is shown sanitized as-is.
+ */
 export function friendlyError(err: unknown): string {
 	const raw = err instanceof Error ? err.message : String(err);
 	const msg = raw.toLowerCase();
@@ -73,11 +113,22 @@ export function friendlyError(err: unknown): string {
 		return t("error.rate_limit");
 	if (msg.includes("aborted") || msg.includes("timeout"))
 		return t("error.request_aborted");
+	// Disabled heuristic: GitHub error bodies about "size"/"large" are too
+	// ambiguous and would mislabel unrelated 413/422 responses.
 	//if (msg.includes("size") || msg.includes("large"))
 	//	return t("error.file_too_large");
 	return `  ${sanitizeForDisplay(raw)}`;
 }
 
+/**
+ * Extract a readable summary from a `.sy` file (SiYuan's JSON document format).
+ *
+ * Recursively walks the JSON AST and collects the longest meaningful strings
+ * (content, markdown, text, name, title) up to a maximum nesting depth. Used
+ * to build compact summaries for the AI commit-message generator.
+ *
+ * Falls back to a plain-text scrub for non-JSON binary files.
+ */
 export function extractTextFromSyFile(content: ArrayBuffer): string {
 	try {
 		const text = new TextDecoder().decode(content);
@@ -116,12 +167,21 @@ export function extractTextFromSyFile(content: ArrayBuffer): string {
 	}
 }
 
+/**
+ * Ask the Groq API to generate a concise, content-aware commit message.
+ *
+ * Returns an empty string on any failure (no key, network error, API error),
+ * so the caller can fall back to a default message. The prompt is written in
+ * English or French depending on the plugin locale.
+ */
 export async function generateCommitMessage(
 	groqKey: string,
 	summaries: { path: string; content: string }[],
 ): Promise<string> {
 	if (!groqKey) return "";
 	try {
+		// Build a compact per-file description: first line as title + a content
+		// excerpt, truncated to keep the prompt reasonably small.
 		let fileDesc = summaries
 			.map((s) => {
 				const title = s.content
@@ -155,6 +215,7 @@ export async function generateCommitMessage(
 		if (!res.ok) return "";
 		const data = await res.json();
 		const msg = data.choices?.[0]?.message?.content?.trim();
+		// Normalize: strip quotes, keep only the first line and cap at 72 chars.
 		return msg ? msg.replace(/["']/g, "").split("\n")[0].slice(0, 72) : "";
 	} catch {
 		return "";

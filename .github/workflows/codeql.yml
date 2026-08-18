@@ -1,3 +1,9 @@
+# GitHub Advanced Security workflow: CodeQL static analysis.
+#
+# Runs on every push / pull-request targeting `main` and on a weekly schedule.
+# The repository contains only JavaScript/TypeScript, which is analyzed in
+# "none" build mode (no compilation step required).
+#
 # For most projects, this workflow file will not need changing; you simply need
 # to commit it to your repository.
 #

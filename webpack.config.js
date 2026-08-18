@@ -1,3 +1,14 @@
+/**
+ * Webpack build configuration for the SiYuan GitHub Sync plugin.
+ *
+ * - Development mode (`npm run dev`)  : watch mode, output written to the repo
+ *   root so it can be symlinked directly into a SiYuan `data/plugins/` folder.
+ * - Production mode (`npm run build`) : minified bundle written to `dist/`.
+ *
+ * The plugin is bundled as a CommonJS2 module (SiYuan loads plugins with
+ * `require()`), and the `siyuan` package is kept external because SiYuan
+ * provides it at runtime.
+ */
 const path = require("path");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const CopyPlugin = require("copy-webpack-plugin");
@@ -8,9 +19,11 @@ module.exports = (env, argv) => {
     const outputDir = production ? "dist" : ".";
 
     const plugins = [
+        // Extract the compiled Sass/CSS into a single `index.css`.
         new MiniCssExtractPlugin({
             filename: "index.css",
         }),
+        // Copy the static assets required by SiYuan's marketplace/bazaar.
         new CopyPlugin({
             patterns: [
                 { from: "plugin.json", to: "." },
@@ -95,6 +108,7 @@ module.exports = (env, argv) => {
             ],
         },
         plugins,
+        // Inline source maps during development make debugging easier.
         devtool: production ? false : "inline-source-map",
         optimization: {
             minimize: production,

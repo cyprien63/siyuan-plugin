@@ -1,3 +1,16 @@
+/**
+ * Standalone verification of the Argon2id WASM implementation.
+ *
+ * Confirms that:
+ *   1. deriving the same password+salt twice yields identical keys, and
+ *   2. a payload encrypted with the first derivation decrypts with the second.
+ *
+ * This guards the `argon2-wasm` dependency (params: time=3, mem=65536 KiB,
+ * hashLen=32, parallelism=1, Argon2id) used by `src/crypto.ts`.
+ *
+ * Environment:
+ *   VERIFY_PW   password to test with (default "e2e-argon2-password")
+ */
 const { webcrypto } = require('crypto');
 (async () => {
   try {
