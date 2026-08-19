@@ -152,12 +152,27 @@ jobs:
             fs.appendFileSync(process.env.GITHUB_ENV, `NEXT_TAG=${nextTag}\nNEW_VERSION=${newVersion}\n`);
           '
 
+          # IMPORTANT : les variables ecrites dans $GITHUB_ENV ci-dessus ne
+          # sont normalement disponibles qu'a partir de la PROCHAINE etape,
+          # pas dans le reste de cette meme etape. On les charge donc
+          # explicitement dans le shell courant pour pouvoir les utiliser
+          # tout de suite (echo, git commit, gh release).
+          source "$GITHUB_ENV"
+
           # Affichage de controle dans les logs GitHub Actions
           echo "Nouvelle version plugin.json : $NEW_VERSION"
           echo "Nouveau Tag Release : $NEXT_TAG"
 
-          # Compilation du projet (doit generer package.zip a la racine du depot)
+          # Compilation du projet (genere le dossier dist/ avec les assets)
           npm run build
+
+          # Le build (voir webpack.config.js) ecrit dans dist/ mais ne cree
+          # pas de zip lui-meme (zip-webpack-plugin n'est pas branche dans
+          # la config webpack). On zippe donc ici le contenu de dist/ pour
+          # obtenir package.zip a la racine du depot.
+          cd dist
+          zip -r ../package.zip .
+          cd ..
 
           # Commit + push du plugin.json mis a jour sur main
           # [skip ci] est essentiel : il empeche ce meme workflow de se
