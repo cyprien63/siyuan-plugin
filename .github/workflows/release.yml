@@ -41,8 +41,13 @@ jobs:
 
       # ------------------------------------------------------------------
       # 3. Installation stricte des dépendances via package-lock.json
+      #    --omit=optional : ignore les dépendances optionnelles (ex: le
+      #    module commitlint intégré à cz-conventional-changelog, qui
+      #    exige Node >=22 et n'est pas utilisé par ce projet). Ça évite
+      #    les incohérences de lock file dues à des versions de Node
+      #    différentes entre les machines locales et le runner CI (Node 20).
       # ------------------------------------------------------------------
-      - run: npm ci
+      - run: npm ci --omit=optional
 
       # ------------------------------------------------------------------
       # 4. Bloc principal : analyse des commits, bump de version, build,
