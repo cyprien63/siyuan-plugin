@@ -1,0 +1,166 @@
+name: Release Plugin
+
+# ==============================================================================
+# Déclenchement : ce workflow se lance automatiquement à chaque push sur "main"
+# ==============================================================================
+on:
+  push:
+    branches:
+      - main
+
+# Permissions explicites requises pour que le job puisse :
+#  - "git push" le commit de bump de version sur main
+#  - créer une Release GitHub via "gh release create"
+# Sans ce bloc, si le dépôt/l'organisation a la politique par défaut du
+# GITHUB_TOKEN en lecture seule, ces deux actions échoueront avec une erreur 403.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Machine virtuelle Ubuntu fournie par GitHub
+    runs-on: ubuntu-latest
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Récupération de l'intégralité de l'historique du dépôt
+      #    fetch-depth: 0 est obligatoire pour pouvoir lire les tags Git
+      #    (sinon seul le dernier commit est disponible et "git describe"
+      #    ne trouvera jamais de tag).
+      # ------------------------------------------------------------------
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ------------------------------------------------------------------
+      # 2. Configuration de Node.js (version 20)
+      # ------------------------------------------------------------------
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ------------------------------------------------------------------
+      # 3. Installation stricte des dépendances via package-lock.json
+      # ------------------------------------------------------------------
+      - run: npm ci
+
+      # ------------------------------------------------------------------
+      # 4. Bloc principal : analyse des commits, bump de version, build,
+      #    commit + push, puis création de la Release GitHub.
+      # ------------------------------------------------------------------
+      - name: Analyser les commits, mettre a jour version et publier
+        env:
+          # Jeton natif GitHub injecte automatiquement, utilise pour
+          # "git push" et "gh release create"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Identite utilisee pour signer le commit automatique de bump de version
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # --------------------------------------------------------------
+          # Script Node.js inline pour le calcul semver + tag de release.
+          #
+          # IMPORTANT : ce script est injecte dans un bloc bash delimite par
+          # des apostrophes simples ( node -e '...' ). Cela signifie qu'AUCUNE
+          # apostrophe non echappee ne doit apparaitre nulle part dans ce bloc,
+          # meme a l'interieur d'un commentaire JS. Une seule apostrophe
+          # (ex: "n'a") suffit a fermer prematurement la chaine bash et casse
+          # tout le step. Les commentaires ci-dessous sont donc volontairement
+          # ecrits sans apostrophes.
+          # --------------------------------------------------------------
+          node -e '
+            const fs = require("fs");
+            const { execSync } = require("child_process");
+
+            // --- ETAPE A : lecture de la version actuelle dans plugin.json ---
+            const plugin = JSON.parse(fs.readFileSync("plugin.json", "utf8"));
+            let [major, minor, patch] = plugin.version.split(".").map(Number);
+
+            // --- ETAPE B : recuperation du dernier tag Git (ex: V8) ---
+            // Si aucun tag nexiste encore dans le depot, on retombe sur V0.
+            let lastTag = "V0";
+            try {
+              lastTag = execSync("git describe --tags $(git rev-list --tags --max-count=1) 2>/dev/null", { encoding: "utf8" }).trim();
+            } catch (e) {
+              // Aucun tag trouve dans lhistorique Git, on garde V0
+            }
+
+            // --- ETAPE C : lecture des commits depuis le dernier tag ---
+            let commits = "";
+            try {
+              const cmd = lastTag !== "V0" ? "git log " + lastTag + "..HEAD --oneline" : "git log --oneline";
+              commits = execSync(cmd, { encoding: "utf8" });
+            } catch (e) {
+              // Aucun commit intermediaire trouve
+            }
+
+            // --- ETAPE D : determination du type de bump (Conventional Commits) ---
+            //
+            // Types generes par Commitizen (cz-conventional-changelog) et leur impact :
+            //   feat              -> minor  (nouvelle fonctionnalite)
+            //   fix               -> patch  (correction de bug)
+            //   docs              -> patch  (documentation uniquement)
+            //   style             -> patch  (formatage, sans changement de logique)
+            //   refactor          -> patch  (reecriture interne)
+            //   perf              -> patch  (amelioration de performance)
+            //   test              -> patch  (ajout/correction de tests)
+            //   build             -> patch  (systeme de build, dependances)
+            //   ci                -> patch  (config CI/CD)
+            //   chore             -> patch  (maintenance diverse)
+            //   revert            -> patch  (annulation dun commit precedent)
+            //   nimporte quel type + "!" ou "BREAKING CHANGE" -> major (prioritaire sur tout)
+            //
+            // Ordre de priorite : major > minor > patch (defaut).
+            // Le point le plus important : un breaking change lemporte toujours,
+            // meme sur un type habituellement mineur (ex: "chore!: ..." -> major quand meme).
+            let bump = "patch";
+            if (/^(\w+)(\(.*\))?!:|BREAKING CHANGE/im.test(commits)) {
+              bump = "major"; // ex: 4.0.0 -> 5.0.0 (feat!:, fix!:, chore!:, ou BREAKING CHANGE dans le corps)
+            } else if (/^feat(\(.*\))?:/im.test(commits)) {
+              bump = "minor"; // ex: 4.0.0 -> 4.1.0
+            } else if (/^(fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.*\))?:/im.test(commits)) {
+              bump = "patch"; // ex: 4.0.0 -> 4.0.1 (tous les autres types Commitizen)
+            }
+            // Remarque : si aucun commit ne suit la convention (message libre sans
+            // prefixe type:), le bump par defaut reste "patch" defini plus haut.
+
+            // Application de lincrement
+            if (bump === "major") { major++; minor = 0; patch = 0; }
+            else if (bump === "minor") { minor++; patch = 0; }
+            else { patch++; }
+
+            // Reconstruction de la version et reecriture de plugin.json
+            const newVersion = `${major}.${minor}.${patch}`;
+            plugin.version = newVersion;
+            fs.writeFileSync("plugin.json", JSON.stringify(plugin, null, 2));
+
+            // --- ETAPE E : calcul du nouveau tag de release (V8 -> V9) ---
+            // Ce compteur est independant du semver de plugin.json : il
+            // sincremente de +1 a chaque release, quel que soit le type
+            // de bump applique.
+            const lastNum = parseInt(lastTag.replace(/[^0-9]/g, "") || "0", 10);
+            const nextTag = "V" + (lastNum + 1);
+
+            // Export des variables vers GITHUB_ENV pour les reutiliser
+            // dans le reste du step bash
+            fs.appendFileSync(process.env.GITHUB_ENV, `NEXT_TAG=${nextTag}\nNEW_VERSION=${newVersion}\n`);
+          '
+
+          # Affichage de controle dans les logs GitHub Actions
+          echo "Nouvelle version plugin.json : $NEW_VERSION"
+          echo "Nouveau Tag Release : $NEXT_TAG"
+
+          # Compilation du projet (doit generer package.zip a la racine du depot)
+          npm run build
+
+          # Commit + push du plugin.json mis a jour sur main
+          # [skip ci] est essentiel : il empeche ce meme workflow de se
+          # redeclencher en boucle infinie suite a ce push automatique
+          git add plugin.json
+          git commit -m "chore(release): $NEXT_TAG [plugin $NEW_VERSION] [skip ci]"
+          git push
+
+          # Creation de la Release GitHub avec uniquement package.zip
+          # comme piece jointe telechargeable, notes generees automatiquement
+          gh release create "$NEXT_TAG" package.zip --title "Release $NEXT_TAG" --generate-notes
