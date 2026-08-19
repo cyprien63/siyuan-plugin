@@ -119,6 +119,18 @@ jobs:
             // Ordre de priorite : major > minor > patch (defaut).
             // Le point le plus important : un breaking change lemporte toujours,
             // meme sur un type habituellement mineur (ex: "chore!: ..." -> major quand meme).
+            // --- ETAPE D2 : detection des commits conventionnels ---
+            // Si aucun commit ne suit la convention (type: ...), on ne touche
+            // pas a plugin.json et on ne cree aucune release.
+            let hasConventional = commits.trim() !== "";
+            if (hasConventional) {
+              hasConventional = /^[\w-]+(\([^)]*\))?!?:/im.test(commits) || /^BREAKING CHANGE:/im.test(commits);
+            }
+            if (!hasConventional) {
+              fs.appendFileSync(process.env.GITHUB_ENV, "SKIP_RELEASE=true\n");
+              process.exit(0);
+            }
+
             let bump = "patch";
             if (/^(\w+)(\(.*\))?!:|BREAKING CHANGE/im.test(commits)) {
               bump = "major"; // ex: 4.0.0 -> 5.0.0 (feat!:, fix!:, chore!:, ou BREAKING CHANGE dans le corps)
@@ -158,6 +170,13 @@ jobs:
           # explicitement dans le shell courant pour pouvoir les utiliser
           # tout de suite (echo, git commit, gh release).
           source "$GITHUB_ENV"
+
+          # Si aucun commit conventionnel na ete detecte, on sarrete ici sans
+          # build, sans commit de bump et sans release.
+          if [ "$SKIP_RELEASE" = "true" ]; then
+            echo "::notice::Aucun commit conventionnel detecte (ex: feat:, fix:). Aucune release creee."
+            exit 0
+          fi
 
           # Affichage de controle dans les logs GitHub Actions
           echo "Nouvelle version plugin.json : $NEW_VERSION"
