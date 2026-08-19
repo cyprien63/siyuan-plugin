@@ -1,7 +1,12 @@
-/* GitHub Sync Plugin — index.scss
- * Minimal styles; SiYuan's built-in b3-* utility classes handle most styling.
- */
+/* ============================================================================
+ * GitHub Sync Plugin — index.scss
+ *
+ * Minimal styles for the plugin UI. Most of the styling is delegated to
+ * SiYuan's built-in `b3-*` utility classes; this file only adds the pieces
+ * the plugin controls itself (status indicator + responsive dialog tweaks).
+ * ========================================================================== */
 
+/* Status indicator (a colored dot + label) shown in the status bar. */
 .github-sync {
     &__status {
         display: flex;
@@ -11,6 +16,7 @@
         color: var(--b3-theme-on-surface);
     }
 
+    /* Colored dot reflecting the sync state (ok / fail / idle). */
     &__dot {
         width: 8px;
         height: 8px;
@@ -23,11 +29,13 @@
     }
 }
 
+/* Subtle pulsing animation for the status dot while a sync is running. */
 @keyframes github-sync-pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
     50% { opacity: 0.5; transform: scale(0.7); }
 }
 
+/* Mobile layout: keep dialogs compact and their action rows wrapable. */
 @media (max-width: 600px) {
     .b3-dialog__content {
         max-height: 60vh !important;

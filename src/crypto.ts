@@ -1,12 +1,26 @@
-// Cryptography utilities for client-side encryption of files uploaded to GitHub.
-// Implementation notes:
-// - Uses PBKDF2 (WebCrypto) to derive an AES-GCM key from a password and a per-repo random salt.
-// - The encrypted blob format: ["GSE1" (4 bytes)] [version (1 byte)] [12 bytes IV] [ciphertext...]
-// - IV is randomly generated per-encryption to ensure IND-CPA/nonce uniqueness for AES-GCM.
-// - PBKDF2 parameters are reasonably high for a browser-based plugin; Argon2id would be preferred in a follow-up.
+/**
+ * Client-side encryption for files uploaded to GitHub.
+ *
+ * When an encryption password is configured, every pushed blob is encrypted
+ * with AES-GCM before leaving the machine, so the remote repository only ever
+ * stores ciphertext (and obfuscated paths).
+ *
+ * Implementation notes:
+ * - Three key-derivation algorithms are tried in order of strength, and every
+ *   successfully derived key is kept. This provides a graceful fallback when
+ *   a device lacks a WASM crypto library:
+ *     1. Argon2id (via `argon2-wasm`)
+ *     2. scrypt (via `scrypt-js`)
+ *     3. PBKDF2 (native WebCrypto — guaranteed fallback)
+ * - Encrypted blob format:
+ *     ["GSE1" (4 bytes)] [version (1 byte)] [IV (12 bytes)] [ciphertext...]
+ * - The IV is randomly generated for every encryption to guarantee nonce
+ *   uniqueness, which AES-GCM strictly requires (IND-CPA).
+ */
 import * as argon2 from "argon2-wasm";
 import * as scryptModule from "scrypt-js";
 
+/** Decode a base64 string into a Uint8Array. */
 function base64ToBytes(b64: string): Uint8Array {
 	const bin = atob(b64);
 	const u = new Uint8Array(bin.length);
@@ -14,6 +28,7 @@ function base64ToBytes(b64: string): Uint8Array {
 	return u;
 }
 
+/** Encode a Uint8Array into a base64 string (chunked to avoid stack overflow). */
 function bytesToBase64(bytes: Uint8Array): string {
 	let s = "";
 	const chunk = 8192;
@@ -25,7 +40,11 @@ function bytesToBase64(bytes: Uint8Array): string {
 	return btoa(s);
 }
 
-// Helper to log key fingerprints for debugging
+/**
+ * Log the first 4 bytes of a derived key (hex) for debugging.
+ *
+ * Only a tiny fingerprint is exposed, never the full key material.
+ */
 async function logKeyFingerprint(key: CryptoKey, name: string) {
 	try {
 		const raw = await crypto.subtle.exportKey("raw", key);
@@ -39,6 +58,13 @@ async function logKeyFingerprint(key: CryptoKey, name: string) {
 	}
 }
 
+/**
+ * Derive AES-GCM keys from a password using every available KDF.
+ *
+ * Returns an array ordered from strongest to weakest algorithm. Callers try
+ * each key until one decrypts successfully, which makes the whole setup
+ * portable across devices with different crypto-library availability.
+ */
 export async function deriveKeys(
 	password: string,
 	saltBase64: string,
@@ -51,13 +77,13 @@ export async function deriveKeys(
 		`[GitHub Sync] Deriving keys. Password length: ${password.length}. Salt Bytes: ${Array.from(saltBytes).slice(0, 4).join(",")}...`,
 	);
 
-	// 1. Try Argon2id (WASM)
+	// 1. Try Argon2id (WASM) — memory-hard, strongest of the three.
 	try {
 		const ares: any = await argon2.hash({
 			pass: password,
 			salt: Array.from(saltBytes),
 			time: 3,
-			mem: 65536,
+			mem: 65536, // 64 MiB
 			hashLen: 32,
 			parallelism: 1,
 			type: argon2.types ? argon2.types.Argon2id : 2,
@@ -76,7 +102,7 @@ export async function deriveKeys(
 		console.warn("[GitHub Sync] argon2-wasm not available or failed:", e);
 	}
 
-	// 2. Try scrypt-js
+	// 2. Try scrypt-js — moderate memory-hardness, still very resistant.
 	try {
 		const scrypt = (scryptModule as any).scrypt || (scryptModule as any);
 		const pwBytes = enc.encode(password);
@@ -94,7 +120,7 @@ export async function deriveKeys(
 		console.warn("[GitHub Sync] scrypt not available or failed:", e);
 	}
 
-	// 3. Try PBKDF2 (Native WebCrypto - guaranteed fallback)
+	// 3. Try PBKDF2 (Native WebCrypto - guaranteed fallback on any modern browser).
 	try {
 		const keyMaterial = await crypto.subtle.importKey(
 			"raw",
@@ -119,9 +145,14 @@ export async function deriveKeys(
 	return keys;
 }
 
+/** Magic bytes (`"GSE1"`) that mark a buffer as an encrypted blob. */
 const MAGIC = new TextEncoder().encode("GSE1");
+/** Current serialization version of the encrypted blob format. */
 const VERSION = 1;
 
+/**
+ * Check whether a buffer starts with the encrypted-blob magic header.
+ */
 export function isEncryptedBuffer(content: ArrayBuffer | Uint8Array): boolean {
 	const data =
 		content instanceof Uint8Array ? content : new Uint8Array(content);
@@ -132,9 +163,14 @@ export function isEncryptedBuffer(content: ArrayBuffer | Uint8Array): boolean {
 	return true;
 }
 
-// Generate a deterministic salt based on the username and repo name.
-// This ensures that the same salt is used for the same user/repo combination, allowing for consistent key derivation across sessions without storing the salt.
-// static salt is worse than random, but we have to use it to allow remote devices to connect with only password as the salt would be deterministic
+/**
+ * Generate a deterministic salt from the username/repo pair.
+ *
+ * Deriving the salt from the repo identity (instead of a random salt stored
+ * alongside the data) means any device can decrypt with ONLY the password —
+ * there is no extra salt to transfer. This is weaker than a random salt, but
+ * it is a deliberate trade-off so remote devices can connect without state.
+ */
 export async function getDeterministicSalt(username: string, repo: string): Promise<string> {
     const encoder = new TextEncoder();
     const data = encoder.encode(`siyuan-github-sync:${username}/${repo}`);
@@ -144,6 +180,11 @@ export async function getDeterministicSalt(username: string, repo: string): Prom
     return bytesToBase64(saltBytes);
 }
 
+/**
+ * Encrypt a plaintext buffer into the versioned `GSE1` blob format.
+ *
+ * Layout: `GSE1` | version | random 12-byte IV | AES-GCM ciphertext.
+ */
 export async function encryptFile(
 	content: ArrayBuffer,
 	key: CryptoKey,
@@ -163,11 +204,19 @@ export async function encryptFile(
 	return out.buffer;
 }
 
+/**
+ * Decrypt a `GSE1` blob, trying every provided key in order.
+ *
+ * Because `deriveKeys()` can return several keys (one per available KDF), each
+ * key is attempted until one produces valid plaintext. AES-GCM's
+ * authentication tag ensures a wrong key always fails to decrypt.
+ */
 export async function decryptFile(
 	encryptedContent: ArrayBuffer,
 	keys: CryptoKey[],
 ): Promise<ArrayBuffer> {
 	const data = new Uint8Array(encryptedContent);
+	// Hex snippet of the first bytes, kept for error reporting.
 	const snippet = Array.from(data.slice(0, Math.min(24, data.length)))
 		.map((b) => b.toString(16).padStart(2, "0"))
 		.join(" ");
@@ -178,6 +227,7 @@ export async function decryptFile(
 		);
 	}
 
+	// Validate the magic header so non-encrypted content is never misread.
 	for (let i = 0; i < MAGIC.length; i++) {
 		if (data[i] !== MAGIC[i])
 			throw new Error(`Invalid magic header. First bytes: ${snippet}`);

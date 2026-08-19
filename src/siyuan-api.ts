@@ -1,3 +1,18 @@
+/**
+ * Wrappers around SiYuan's built-in HTTP APIs.
+ *
+ * Every function talks to the local SiYuan instance through its internal
+ * `/api/...` endpoints. The wrappers are defensive by design: they never
+ * throw — on any failure they return a safe default (`[]`, `false`, `null`),
+ * so callers can treat them as optional operations.
+ *
+ * Sections:
+ *  - File operations      (readDir / getFile / putFile / removeFile)
+ *  - Notebook operations  (list / open / get & set configuration)
+ *  - Appearance           (active theme, light/dark mode)
+ *  - Bazaar (marketplace) (install plugins / widgets / themes)
+ *  - Directory collection (walk the workspace and build the sync file list)
+ */
 import {
 	SiYuanDirEntry,
 	NotebookManifestEntry,
@@ -7,6 +22,7 @@ import {
 	LOCKED_EXTENSIONS,
 } from "./types";
 
+/** List the entries of a workspace directory (`/api/file/readDir`). */
 export async function siYuanReadDir(path: string): Promise<SiYuanDirEntry[]> {
 	try {
 		const res = await fetch("/api/file/readDir", {
@@ -20,6 +36,7 @@ export async function siYuanReadDir(path: string): Promise<SiYuanDirEntry[]> {
 	}
 }
 
+/** Read a file from the workspace and return its raw bytes (`/api/file/getFile`). */
 export async function siYuanGetFile(path: string): Promise<ArrayBuffer | null> {
 	try {
 		const res = await fetch("/api/file/getFile", {
@@ -32,6 +49,7 @@ export async function siYuanGetFile(path: string): Promise<ArrayBuffer | null> {
 	}
 }
 
+/** Write a file to the workspace (`/api/file/putFile`, multipart upload). */
 export async function siYuanPutFile(
 	path: string,
 	content: ArrayBuffer,
@@ -48,6 +66,7 @@ export async function siYuanPutFile(
 	}
 }
 
+/** Ask SiYuan to rebuild its file-tree (needed after batch pull/deletes). */
 export async function siYuanRefreshFiletree(): Promise<boolean> {
 	try {
 		const res = await fetch("/api/filetree/refreshFiletree", {
@@ -61,6 +80,7 @@ export async function siYuanRefreshFiletree(): Promise<boolean> {
 	}
 }
 
+/** Delete a file from the workspace (`/api/file/removeFile`). */
 export async function siYuanRemoveFile(path: string): Promise<boolean> {
 	try {
 		const res = await fetch("/api/file/removeFile", {
@@ -74,6 +94,11 @@ export async function siYuanRemoveFile(path: string): Promise<boolean> {
 	}
 }
 
+/**
+ * List every notebook of the workspace.
+ *
+ * Returns only `{ id, name }` pairs, since that is all the manifests need.
+ */
 export async function siYuanListNotebooks(): Promise<NotebookManifestEntry[]> {
 	try {
 		const res = await fetch("/api/notebook/lsNotebooks", {
@@ -91,6 +116,7 @@ export async function siYuanListNotebooks(): Promise<NotebookManifestEntry[]> {
 	}
 }
 
+/** Open a notebook in the UI (`/api/notebook/openNotebook`). */
 export async function siYuanOpenNotebook(notebookId: string): Promise<boolean> {
 	try {
 		const res = await fetch("/api/notebook/openNotebook", {
@@ -105,6 +131,7 @@ export async function siYuanOpenNotebook(notebookId: string): Promise<boolean> {
 	}
 }
 
+/** Fetch a notebook's configuration (`/api/notebook/getNotebookConf`). */
 export async function siYuanGetNotebookConf(notebookId: string): Promise<any> {
 	try {
 		const res = await fetch("/api/notebook/getNotebookConf", {
@@ -119,6 +146,7 @@ export async function siYuanGetNotebookConf(notebookId: string): Promise<any> {
 	}
 }
 
+/** Update a notebook's configuration (`/api/notebook/setNotebookConf`). */
 export async function siYuanSetNotebookConf(
 	notebookId: string,
 	conf: any,
@@ -136,6 +164,11 @@ export async function siYuanSetNotebookConf(
 	}
 }
 
+/**
+ * Read the current appearance settings (theme + light/dark mode).
+ *
+ * `mode` is 0 for light and 1 for dark.
+ */
 export async function getCurrentAppearance(): Promise<{
 	mode: number;
 	themeLight: string;
@@ -159,6 +192,12 @@ export async function getCurrentAppearance(): Promise<{
 	}
 }
 
+/**
+ * Set the active theme for the given mode (light=0 / dark=1).
+ *
+ * Used after a pull that installed new themes, to restore the previously
+ * active theme saved inside the theme manifest.
+ */
 export async function setActiveTheme(
 	themeDir: string,
 	mode: number,
@@ -186,6 +225,11 @@ export async function setActiveTheme(
 	}
 }
 
+/**
+ * Install a plugin from the SiYuan marketplace by its name.
+ *
+ * Looks the package up in the bazaar, then triggers the official installer.
+ */
 export async function installSinglePlugin(
 	pluginName: string,
 ): Promise<boolean> {
@@ -216,6 +260,7 @@ export async function installSinglePlugin(
 	}
 }
 
+/** Install a widget from the SiYuan marketplace by its name. */
 export async function installSingleWidget(
 	widgetName: string,
 ): Promise<boolean> {
@@ -245,6 +290,7 @@ export async function installSingleWidget(
 	}
 }
 
+/** Install a theme from the SiYuan marketplace by its name. */
 export async function installSingleTheme(
 	themeName: string,
 	mode = 0,
@@ -276,6 +322,13 @@ export async function installSingleTheme(
 	}
 }
 
+/**
+ * Recursively walk a workspace directory and build the list of files to sync.
+ *
+ * Each visited file is mapped to a `FileToSync` with its SiYuan path and its
+ * GitHub path. Directories / files matching the exclusion rules
+ * (`SKIP_ROOT_DIRS`, `SKIP_PATH_FRAGMENTS`, `LOCKED_EXTENSIONS`) are skipped.
+ */
 export async function collectDir(
 	siBase: string,
 	ghBase: string,

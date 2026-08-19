@@ -1,12 +1,25 @@
+/**
+ * Lightweight internationalization (i18n) for the plugin.
+ *
+ * There is no external i18n library: translations live in a plain map of
+ * locale -> key -> string (English, French and Chinese). The current locale is
+ * a module-level variable toggled by `setLocale()`, and every UI string goes
+ * through `t()` so the plugin can switch language at runtime.
+ */
 type LocaleMap = { [key: string]: string };
 
+/** Human-readable labels for every supported locale (used in the language select). */
 export const langs: Record<string, string> = {
 	fr: "Français",
 	en: "English",
 	zh: "简体中文",
 };
 
+/** All translation strings, indexed by locale, then by dotted key. */
 const locales: Record<string, LocaleMap> = {
+	// ------------------------------------------------------------------------
+	// FRENCH
+	// ------------------------------------------------------------------------
 	fr: {
 		"status.initializing": "Initialisation...",
 		"status.ok": "✅ OK",
@@ -151,6 +164,9 @@ const locales: Record<string, LocaleMap> = {
 		"action.push": "⏳ Push en cours...",
 		"action.pull": "⏳ Pull en cours...",
 	},
+	// ------------------------------------------------------------------------
+	// ENGLISH
+	// ------------------------------------------------------------------------
 	en: {
 		"status.initializing": "Initializing...",
 		"status.ok": "✅ OK",
@@ -284,6 +300,9 @@ const locales: Record<string, LocaleMap> = {
 		"action.push": "⏳ Push in progress...",
 		"action.pull": "⏳ Pull in progress...",
 	},
+	// ------------------------------------------------------------------------
+	// CHINESE
+	// ------------------------------------------------------------------------
 	zh: {
 		"status.initializing": "初始化...",
 		"status.ok": "✅ 正常",
@@ -404,19 +423,31 @@ const locales: Record<string, LocaleMap> = {
 	},
 };
 
+/** Locale currently in use. Defaults to English. */
 let current = "en";
 
+/**
+ * Translate a dotted key (e.g. `"status.ok"`) into the current locale.
+ *
+ * Returns the key itself when no translation exists, so missing strings are
+ * visible instead of silently disappearing.
+ */
 export function t(key: string): string {
 	const map = locales[current] || {};
 	return map[key] ?? key;
 }
 
+/** Return the currently active locale code. */
 export function getLocale(): string {
 	return current;
 }
+
+/** Switch the active locale (ignored silently if the locale is unknown). */
 export function setLocale(l: string) {
 	if (locales[l]) current = l;
 }
+
+/** List of every supported locale code. */
 export function availableLocales(): string[] {
 	return Object.keys(locales);
 }

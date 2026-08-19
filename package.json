@@ -5,12 +5,20 @@
   "scripts": {
     "dev": "webpack --config webpack.config.js --mode development --watch",
     "build": "webpack --config webpack.config.js --mode production",
-    "lint": "eslint src --ext .ts"
+    "lint": "eslint src --ext .ts",
+    "commit": "cz"
+  },
+  "config": {
+    "commitizen": {
+      "path": "cz-conventional-changelog"
+    }
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "commitizen": "^4.3.1",
     "copy-webpack-plugin": "^12.0.2",
     "css-loader": "^7.1.2",
+    "cz-conventional-changelog": "^3.3.0",
     "esbuild": "^0.24.0",
     "esbuild-loader": "^4.2.2",
     "mini-css-extract-plugin": "^2.9.2",
