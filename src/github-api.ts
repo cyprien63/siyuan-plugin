@@ -8,11 +8,12 @@
  *   - commits (tree + message + parents)
  *   - refs   (branch pointers)
  *
- * It also transparently handles GitHub's primary and secondary rate limits by
+ * It also automatically handles GitHub's primary and secondary rate limits by
  * backing off and retrying based on the returned headers.
  */
-import { GITHUB_API, GitHubTreeItem } from "./types";
-import { encodePath, base64ToArrayBuffer, sleep } from "./utils";
+
+import { GITHUB_API, GitHubTreeItem, GitHubCommit, GitHubTreePayload } from "./types";
+import { base64ToArrayBuffer, sleep } from "./utils";
 import { t } from "./i18n";
 
 export class GitHubAPI {
@@ -63,10 +64,11 @@ export class GitHubAPI {
 				console.debug(`[GitHub Sync] Rate limit remaining: ${remaining}`);
 			}
 
+			// automatic rate limit handling
 			if (res.status === 403 || res.status === 429) {
 				const retryAfter = res.headers.get("retry-after");
 				const resetTime = res.headers.get("x-ratelimit-reset");
-				let waitTime = 1000;
+				let waitTime: number;
 
 				if (retryAfter) {
 					// Secondary rate limit: GitHub tells us exactly when to retry.
@@ -115,6 +117,7 @@ export class GitHubAPI {
 	 * an empty list. A 404 (missing tree) is also mapped to `[]`.
 	 */
 	async getRemoteTree(treeSha: string): Promise<GitHubTreeItem[]> {
+		// check if our tree is empty
 		if (treeSha === "4b825dc642cb6eb9a060e54bf8d69288fbee4904") {
 			return [];
 		}
@@ -178,7 +181,7 @@ export class GitHubAPI {
 	}
 
 	/** Fetch the 30 most recent commits of the repository. */
-	async getCommits(): Promise<any[]> {
+	async getCommits(): Promise<GitHubCommit[]> {
 		const res = await this.gh(
 			`/repos/${this.username}/${this.repo}/commits?per_page=30`,
 		);
@@ -240,8 +243,8 @@ export class GitHubAPI {
 	 * A `sha: null` entry marks a deletion. Chunking large trees is the
 	 * caller's responsibility.
 	 */
-	createTree(baseTree: string, treeItems: any[]) {
-		const payload: any = { tree: treeItems };
+	createTree(baseTree: string, treeItems: GitHubTreeItem[]) {
+		const payload: GitHubTreePayload = { tree: treeItems };
 		if (baseTree) {
 			payload.base_tree = baseTree;
 		}

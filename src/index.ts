@@ -2139,6 +2139,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			const onProgress = (pct: number, status: string, details: string) => this.updateProgress(pct, status, details);
 
 			const manifestItem = remoteItems.find(i => i.path === PLUGIN_MANIFEST_PATH);
+			let pluginsInstalled: number | null;
 			if (manifestItem) {
 				const manifestContent = await api.downloadBlob(manifestItem.sha);
 				if (manifestContent) {
@@ -2150,6 +2151,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 
 			const widgetManifestItem = remoteItems.find(i => i.path === WIDGET_MANIFEST_PATH);
+			let widgetsInstalled: number | null;
 			if (widgetManifestItem) {
 				const widgetManifestContent = await api.downloadBlob(widgetManifestItem.sha);
 				if (widgetManifestContent) {
@@ -2161,6 +2163,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 
 			const themeManifestItem = remoteItems.find(i => i.path === THEME_MANIFEST_PATH);
+			let themesInstalled: number | null;
 			if (themeManifestItem) {
 				const themeManifestContent = await api.downloadBlob(themeManifestItem.sha);
 				if (themeManifestContent) {
@@ -2170,6 +2173,9 @@ export default class GitHubSyncPlugin extends Plugin {
 					} catch { /* ignore */ }
 				}
 			}
+
+			// provisory debug line, may include this info in the UI later on
+			console.log(`[GitHub Sync] Installed ${pluginsInstalled ?? 0} plugins, ${widgetsInstalled ?? 0} widgets, ${themesInstalled ?? 0} themes from manifests.`);
 
 			// 4. Remove local files that no longer exist on the remote
 			// Build a set of all "plaintext" remote paths (de-obfuscated) to

@@ -18,7 +18,8 @@
  *   uniqueness, which AES-GCM strictly requires (IND-CPA).
  */
 import * as argon2 from "argon2-wasm";
-import * as scryptModule from "scrypt-js";
+import { scrypt } from "scrypt-js";
+import {Argon2Response} from "./types";
 
 /** Decode a base64 string into a Uint8Array. */
 function base64ToBytes(b64: string): Uint8Array {
@@ -54,7 +55,7 @@ async function logKeyFingerprint(key: CryptoKey, name: string) {
 			.join("");
 		console.debug(`[GitHub Sync] Key Fingerprint [${name}]: ${hex}`);
 	} catch (e) {
-		console.debug(`[GitHub Sync] Could not export fingerprint for ${name}`);
+		console.debug(`[GitHub Sync] Could not export fingerprint for ${name}: ${e instanceof Error ? e.message : String(e)}`);
 	}
 }
 
@@ -79,7 +80,7 @@ export async function deriveKeys(
 
 	// 1. Try Argon2id (WASM) — memory-hard, strongest of the three.
 	try {
-		const ares: any = await argon2.hash({
+		const ares: Argon2Response = await argon2.hash({
 			pass: password,
 			salt: Array.from(saltBytes),
 			time: 3,
@@ -104,7 +105,6 @@ export async function deriveKeys(
 
 	// 2. Try scrypt-js — moderate memory-hardness, still very resistant.
 	try {
-		const scrypt = (scryptModule as any).scrypt || (scryptModule as any);
 		const pwBytes = enc.encode(password);
 		const derived = await scrypt(pwBytes, saltBytes, 16384, 8, 1, 32);
 		const key = await crypto.subtle.importKey(
@@ -258,9 +258,9 @@ export async function decryptFile(
 				keys[k],
 				ciphertext,
 			);
-		} catch (e: any) {
-			const errName = e?.name || "UnknownError";
-			const errMsg = e?.message || "";
+		} catch (e: unknown) {
+			const errName = (e as Error)?.name || "UnknownError";
+			const errMsg = (e as Error)?.message || "";
 			lastError = `${errName}${errMsg ? ": " + errMsg : " (Authentication tag mismatch)"}`;
 			console.debug(
 				`[GitHub Sync] Decryption fallback attempt #${k + 1} failed: ${lastError}`,

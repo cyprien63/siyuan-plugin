@@ -80,6 +80,11 @@ export const NOTEBOOK_MANIFEST_FILE = "notebook.json";
  */
 export const PLUGIN_SELF_NAME = "siyuan-github-sync";
 
+
+// --------------------------------------------
+// GitHub interfaces
+// --------------------------------------------
+
 /**
  * Plugin configuration as persisted under `STORAGE_KEY`.
  *
@@ -116,16 +121,6 @@ export const DEFAULT_CONFIG: GitHubConfig = {
 	language: "en",
 };
 
-/** A single entry returned by SiYuan's `/api/file/readDir`. */
-export interface SiYuanDirEntry {
-	/** Entry name (file or folder) inside the directory. */
-	name: string;
-	/** Whether this entry is a directory. */
-	isDir: boolean;
-	/** Last modification timestamp of the entry. */
-	updated: number;
-}
-
 /**
  * A node of a GitHub git tree (as returned by the
  * `GET /git/trees/{sha}?recursive=1` endpoint).
@@ -136,12 +131,96 @@ export interface GitHubTreeItem {
 	/** Git file mode (e.g. "100644" for regular files). */
 	mode: string;
 	/** Node kind: a file (`blob`) or a folder (`tree`). */
-	type: "blob" | "tree";
+	type: "blob" | "tree" | "commit";
 	/** Git object SHA of the blob (or tree). */
 	sha: string;
 	/** Blob size in bytes, when provided by the API. */
 	size?: number;
 }
+
+/** A single plugin/widget/theme entry recorded in a generated manifest. */
+export interface GitHubTreePayload {
+	tree: GitHubTreeItem[];
+	base_tree?: string;
+}
+
+export interface GitHubCommit {
+	sha: string;
+	node_id: string;
+	commit: {
+		author: {
+			name: string;
+			email: string;
+			date: string;
+		};
+		message: string;
+	};
+	html_url: string;
+}
+
+// --------------------------------------------
+// Siyuan interfaces
+// --------------------------------------------
+
+/** A single entry returned by SiYuan's `/api/file/readDir`. */
+export interface SiYuanDirEntry {
+	/** Entry name (file or folder) inside the directory. */
+	name: string;
+	/** Whether this entry is a directory. */
+	isDir: boolean;
+	/** Last modification timestamp of the entry. */
+	updated: number;
+}
+
+export interface BazaarPackage {
+	name: string;
+	repoURL: string;
+	repoHash: string;
+}
+
+export interface PluginManifestEntry {
+	/** Marketplace name of the package. */
+	name: string;
+	/** Installed version, used to detect upgrades. */
+	version: string;
+}
+
+/** Manifest file describing the installed plugins or widgets. */
+export interface PluginManifest {
+	/** List of installed packages. */
+	plugins: PluginManifestEntry[];
+	themeLight?: string;
+	themeDark?: string;
+}
+
+/** Manifest payload for a single notebook (stores its human-readable name). */
+export interface NotebookManifestEntry {
+	/** SiYuan notebook identifier (folder name in `data/`). */
+	id: string;
+	/** Display name of the notebook. */
+	name: string;
+}
+
+/** A generated manifest ready to be uploaded, together with its remote path. */
+export interface ManifestFile {
+	/** GitHub path where the manifest must be written. */
+	githubPath: string;
+	/** Raw bytes (usually UTF-8 JSON) of the manifest. */
+	content: ArrayBuffer;
+}
+
+// --------------------------------------------
+// crypto interfaces
+// --------------------------------------------
+
+// Argon2 object response
+export interface Argon2Response {
+	hash: ArrayBuffer | Uint8Array | number[];
+}
+
+// --------------------------------------------
+// custom interfaces
+// --------------------------------------------
 
 /** A file to sync, expressed with both its SiYuan and GitHub path. */
 export interface FileToSync {
@@ -170,46 +249,10 @@ export interface SyncedState {
  * Each list holds files grouped by the action the push should take.
  */
 export interface MergePlan {
-	/** Files that must be re-encrypted and uploaded as new blobs. */
 	toUpload: { githubPath: string; siYuanPath: string }[];
-	/** Files whose remote blob can be reused as-is (SHA unchanged). */
 	toReuse: { githubPath: string; sha: string }[];
-	/** Files that must be removed from the remote tree. */
 	toDelete: { githubPath: string }[];
-	/** Remote files that must be downloaded into the local workspace. */
 	toPull: { githubPath: string; siYuanPath: string }[];
-	/** Files modified on both sides; left for the user to resolve. */
 	conflicted: { githubPath: string; siYuanPath: string }[];
-	/** Number of local files skipped because they exceed MAX_FILE_BYTES. */
 	skippedLarge: number;
-}
-
-/** A single plugin/widget/theme entry recorded in a generated manifest. */
-export interface PluginManifestEntry {
-	/** Marketplace name of the package. */
-	name: string;
-	/** Installed version, used to detect upgrades. */
-	version: string;
-}
-
-/** Manifest file describing the installed plugins or widgets. */
-export interface PluginManifest {
-	/** List of installed packages. */
-	plugins: PluginManifestEntry[];
-}
-
-/** Manifest payload for a single notebook (stores its human-readable name). */
-export interface NotebookManifestEntry {
-	/** SiYuan notebook identifier (folder name in `data/`). */
-	id: string;
-	/** Display name of the notebook. */
-	name: string;
-}
-
-/** A generated manifest ready to be uploaded, together with its remote path. */
-export interface ManifestFile {
-	/** GitHub path where the manifest must be written. */
-	githubPath: string;
-	/** Raw bytes (usually UTF-8 JSON) of the manifest. */
-	content: ArrayBuffer;
 }

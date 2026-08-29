@@ -59,7 +59,7 @@ export class HistoryDialog {
 			for (const c of commits) {
 				const sha = c.sha.slice(0, 7);
 				// generate date string locale based on language
-				let locale_string: string = navigator.language || "en-US";
+				const locale_string: string = navigator.language || "en-US";
 				const date = new Date(c.commit.author.date).toLocaleString(locale_string);
 				const author = c.commit.author.name;
 				const msg = c.commit.message.split("\n")[0];
@@ -105,6 +105,8 @@ export class HistoryDialog {
 	 * Escape HTML-special characters before injecting commit messages into the
 	 * dialog markup (messages are user-authored, so this prevents XSS).
 	 */
+	// TODO: this (above) is a terrible way to insert messages into html
+	// gotta change it later on, for now it's a minor thing
 	private escapeHtml(s: string): string {
 		return s.replace(
 			/[&<>"']/g,

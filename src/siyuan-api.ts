@@ -16,6 +16,7 @@
 import {
 	SiYuanDirEntry,
 	NotebookManifestEntry,
+	BazaarPackage,
 	FileToSync,
 	SKIP_ROOT_DIRS,
 	SKIP_PATH_FRAGMENTS,
@@ -107,7 +108,7 @@ export async function siYuanListNotebooks(): Promise<NotebookManifestEntry[]> {
 		});
 		const json = await res.json();
 		if (json.code !== 0 || !json.data?.notebooks) return [];
-		return json.data.notebooks.map((nb: any) => ({
+		return json.data.notebooks.map((nb: { id: string; name?: string }) => ({
 			id: nb.id,
 			name: nb.name || "",
 		}));
@@ -132,7 +133,7 @@ export async function siYuanOpenNotebook(notebookId: string): Promise<boolean> {
 }
 
 /** Fetch a notebook's configuration (`/api/notebook/getNotebookConf`). */
-export async function siYuanGetNotebookConf(notebookId: string): Promise<any> {
+export async function siYuanGetNotebookConf(notebookId: string): Promise<Record<string, unknown> | null> {
 	try {
 		const res = await fetch("/api/notebook/getNotebookConf", {
 			method: "POST",
@@ -149,7 +150,7 @@ export async function siYuanGetNotebookConf(notebookId: string): Promise<any> {
 /** Update a notebook's configuration (`/api/notebook/setNotebookConf`). */
 export async function siYuanSetNotebookConf(
 	notebookId: string,
-	conf: any,
+	conf: Record<string, unknown>,
 ): Promise<boolean> {
 	try {
 		const res = await fetch("/api/notebook/setNotebookConf", {
@@ -241,7 +242,7 @@ export async function installSinglePlugin(
 		});
 		const listJson = await listRes.json();
 		if (listJson.code !== 0 || !listJson.data?.packages) return false;
-		const pkg = listJson.data.packages.find((p: any) => p.name === pluginName);
+		const pkg = listJson.data.packages.find((p: BazaarPackage) => p.name === pluginName);
 		if (!pkg) return false;
 		const installRes = await fetch("/api/bazaar/installBazaarPlugin", {
 			method: "POST",
@@ -272,7 +273,7 @@ export async function installSingleWidget(
 		});
 		const listJson = await listRes.json();
 		if (listJson.code !== 0 || !listJson.data?.packages) return false;
-		const pkg = listJson.data.packages.find((p: any) => p.name === widgetName);
+		const pkg = listJson.data.packages.find((p: BazaarPackage) => p.name === widgetName);
 		if (!pkg) return false;
 		const installRes = await fetch("/api/bazaar/installBazaarWidget", {
 			method: "POST",
@@ -303,7 +304,7 @@ export async function installSingleTheme(
 		});
 		const listJson = await listRes.json();
 		if (listJson.code !== 0 || !listJson.data?.packages) return false;
-		const pkg = listJson.data.packages.find((p: any) => p.name === themeName);
+		const pkg = listJson.data.packages.find((p: BazaarPackage) => p.name === themeName);
 		if (!pkg) return false;
 		const installRes = await fetch("/api/bazaar/installBazaarTheme", {
 			method: "POST",

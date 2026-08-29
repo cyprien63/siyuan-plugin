@@ -177,7 +177,7 @@ export async function installMissingWidgets(
  */
 export async function collectInstalledThemes(
 	includeActive = false,
-): Promise<any> {
+): Promise<PluginManifest> {
 	const THEMES_DIR = "conf/appearance/themes";
 	const entries = await siYuanReadDir(THEMES_DIR);
 	const plugins: PluginManifestEntry[] = [];
@@ -195,7 +195,7 @@ export async function collectInstalledThemes(
 			continue;
 		}
 	}
-	const result: any = { plugins };
+	const result: PluginManifest = { plugins };
 	if (includeActive) {
 		const appearance = await getCurrentAppearance();
 		if (appearance) {
@@ -221,7 +221,7 @@ export async function generateThemeManifest(): Promise<ManifestFile> {
  * @returns The number of themes actually installed.
  */
 export async function installMissingThemes(
-	remoteManifest: any,
+	remoteManifest: PluginManifest,
 	onProgress?: (pct: number, status: string, details: string) => void,
 ): Promise<number> {
 	const local = await collectInstalledThemes();
