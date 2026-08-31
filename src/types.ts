@@ -162,6 +162,12 @@ export interface GitHubCommit {
 // Siyuan interfaces
 // --------------------------------------------
 
+declare global {
+	interface Window {
+		__github_sync_locale?: string; // Adjust the type based on what getLocale() returns
+	}
+}
+
 /** A single entry returned by SiYuan's `/api/file/readDir`. */
 export interface SiYuanDirEntry {
 	/** Entry name (file or folder) inside the directory. */
@@ -170,6 +176,21 @@ export interface SiYuanDirEntry {
 	isDir: boolean;
 	/** Last modification timestamp of the entry. */
 	updated: number;
+}
+
+export interface SiYuanNotebookConfigDetails {
+	name?: string;
+	closed?: boolean;
+	refCreateSavePath?: string;
+	createDocNameTemplate?: string;
+	dailyNoteSavePath?: string;
+	dailyNoteTemplatePath?: string;
+}
+
+export interface SiYuanNotebookConfResponse {
+	box?: string;
+	name?: string;
+	conf?: SiYuanNotebookConfigDetails;
 }
 
 export interface BazaarPackage {
@@ -221,6 +242,16 @@ export interface Argon2Response {
 // --------------------------------------------
 // custom interfaces
 // --------------------------------------------
+
+export interface PluginCfg {
+	username: string,
+	repo: string,
+	token: string,
+	groqKey: string,
+	showDiff: boolean,
+	language: string,
+	encryptionPassword?: string,
+}
 
 /** A file to sync, expressed with both its SiYuan and GitHub path. */
 export interface FileToSync {

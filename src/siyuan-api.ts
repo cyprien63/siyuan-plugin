@@ -15,12 +15,14 @@
  */
 import {
 	SiYuanDirEntry,
+	SiYuanNotebookConfResponse,
 	NotebookManifestEntry,
 	BazaarPackage,
 	FileToSync,
 	SKIP_ROOT_DIRS,
 	SKIP_PATH_FRAGMENTS,
 	LOCKED_EXTENSIONS,
+	SiYuanNotebookConfigDetails,
 } from "./types";
 
 /** List the entries of a workspace directory (`/api/file/readDir`). */
@@ -133,7 +135,7 @@ export async function siYuanOpenNotebook(notebookId: string): Promise<boolean> {
 }
 
 /** Fetch a notebook's configuration (`/api/notebook/getNotebookConf`). */
-export async function siYuanGetNotebookConf(notebookId: string): Promise<Record<string, unknown> | null> {
+export async function siYuanGetNotebookConf(notebookId: string): Promise<SiYuanNotebookConfResponse | null> {
 	try {
 		const res = await fetch("/api/notebook/getNotebookConf", {
 			method: "POST",
@@ -150,7 +152,7 @@ export async function siYuanGetNotebookConf(notebookId: string): Promise<Record<
 /** Update a notebook's configuration (`/api/notebook/setNotebookConf`). */
 export async function siYuanSetNotebookConf(
 	notebookId: string,
-	conf: Record<string, unknown>,
+	conf: SiYuanNotebookConfigDetails,
 ): Promise<boolean> {
 	try {
 		const res = await fetch("/api/notebook/setNotebookConf", {

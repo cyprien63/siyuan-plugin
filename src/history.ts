@@ -6,6 +6,7 @@
  * "Restore" button that calls back into the plugin to restore that commit.
  */
 import { Dialog, showMessage } from "siyuan";
+import { GitHubCommit } from "./types";
 import { t } from "./i18n";
 
 export class HistoryDialog {
@@ -17,7 +18,7 @@ export class HistoryDialog {
 	 * @param restoreCommit   Restores a commit by SHA + message (async).
 	 */
 	constructor(
-		private getHistory: () => Promise<any[]>,
+		private getHistory: () => Promise<GitHubCommit[]>,
 		private restoreCommit: (sha: string, msg: string) => Promise<void>,
 	) {
 		this.dialog = new Dialog({

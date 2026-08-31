@@ -27,6 +27,7 @@ import { Plugin, Setting, Dialog, showMessage } from "siyuan";
 import "./index.scss";
 import {
 	GitHubConfig,
+	GitHubCommit,
 	DEFAULT_CONFIG,
 	STORAGE_KEY,
 	SYNC_ROOT,
@@ -43,6 +44,7 @@ import {
 	THEME_MANIFEST_PATH,
 	NOTEBOOK_MANIFEST_FILE,
 	GitHubTreeItem,
+	PluginCfg,
 } from "./types";
 import {
 	calculateGitSha,
@@ -227,7 +229,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			console.error(
 				`[GitHub Sync] maybeDecrypt failed: ${msg}. firstBytes=${snippet}`,
 			);
-			throw new Error(`Decryption failed: Verify your password. (${msg})`);
+			throw new Error(`Decryption failed: Verify your password. (${msg})`, { cause: e });
 		}
 	}
 
@@ -245,9 +247,12 @@ export default class GitHubSyncPlugin extends Plugin {
 		if (saved) {
 			this.config = { ...DEFAULT_CONFIG, ...saved };
 			try {
+				// handling setLocale should be done in try-catch as the function will otherwise instantly halt
 				setLocale(this.config.language ?? "en");
-				(window as any).__github_sync_locale = getLocale();
-			} catch {}
+				(window as Window).__github_sync_locale = getLocale();
+			} catch (e) {
+				console.error(`[GitHub Sync] Failed to load locale '${this.config.language}'`, e);
+			}
 		}
 		this.registerSettings();
 		this.addTopBar({
@@ -421,7 +426,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				);
 				if (!ok) return;
 			}
-			const cfg: any = {
+			const cfg: PluginCfg = {
 				username: uIn.value.trim(),
 				repo: rIn.value.trim(),
 				token: tIn.value.trim(),
@@ -471,7 +476,9 @@ export default class GitHubSyncPlugin extends Plugin {
 					if (data.language) {
 						try {
 							setLocale(data.language);
-						} catch {}
+						} catch {
+							console.error("[GitHub Sync] Failed to set locale from imported config:", data.language);
+						}
 					}
 					showMessage(t("msg.config_loaded"));
 				} catch {
@@ -542,9 +549,15 @@ export default class GitHubSyncPlugin extends Plugin {
 			this.config.language = langSelect.value;
 			try {
 				setLocale(langSelect.value);
-				(window as any).__github_sync_locale = getLocale();
-			} catch {}
+				(window as Window).__github_sync_locale = getLocale();
+			} catch {
+				console.error("[GitHub Sync] Failed to set locale from language selector:", langSelect.value);
+			}
 		};
+
+		// --------------------------------------------
+		// items population
+		// --------------------------------------------
 
 		this.setting.addItem({
 			title: t("setting.github_user"),
@@ -733,7 +746,7 @@ export default class GitHubSyncPlugin extends Plugin {
 					const keys = await deriveKeys(oldPassword, salt);
 					await decryptFile(verifyBuf, keys);
 				} catch (e) {
-					throw new Error(t("error.bad_password"));
+					throw new Error(t("error.bad_password"), { cause: e });
 				}
 			}
 
@@ -811,7 +824,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		const localFileMap = new Map<string, string>();
 		for (const f of localFiles) localFileMap.set(f.githubPath, f.siYuanPath);
 
-		const treeItems: any[] = [];
+		const treeItems: GitHubTreeItem[] = [];
 		const reusedPaths = new Set<string>();
 
 		// 1. DELETE all obfuscated (encrypted) blobs.
@@ -940,7 +953,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		const baseTreeData = await baseTreeRes.json();
 		let currentTreeSha = baseTreeData.tree.sha;
 		// Deduplicate by path so a path can never appear twice in one tree call.
-		const treeMap = new Map<string, any>();
+		const treeMap = new Map<string, GitHubTreeItem>();
 		for (const tEnter of treeItems) treeMap.set(tEnter.path, tEnter);
 		const dedupedTreeItems = [...treeMap.values()];
 		for (let i = 0; i < dedupedTreeItems.length; i += CHUNK_SIZE) {
@@ -1142,7 +1155,7 @@ export default class GitHubSyncPlugin extends Plugin {
 	private async mergeBeforePush(
 		localFiles: FileToSync[],
 		remoteMap: Map<string, string>,
-		lastCommitSha: string,
+		// lastCommitSha: string,
 	): Promise<MergePlan> {
 		const synced = await this.loadSyncedState();
 		const syncedFiles = synced?.files || {};
@@ -1296,7 +1309,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			const branch = repoInfo.default_branch || "main";
 
 			let lastCommitSha: string | null = null;
-			let remoteMap = new Map<string, string>();
+			const remoteMap = new Map<string, string>();
 			const actualRemotePathSet = new Set<string>();
 			let refRes = await api.getRef(branch);
 
@@ -1334,7 +1347,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				// If any encrypted blob exists on the remote, make sure the
 				// current password can decrypt it before uploading anything new.
 				const verifyNode = remoteTree.find(
-					(i: any) =>
+					(i: GitHubTreeItem) =>
 						i.type === "blob" &&
 						(i.path.endsWith(`/${NOTEBOOK_MANIFEST_FILE}`) ||
 							i.path.includes("/enc/")),
@@ -1345,7 +1358,7 @@ export default class GitHubSyncPlugin extends Plugin {
 						try {
 							await this.maybeDecrypt(testBlob);
 						} catch (e) {
-							throw new Error(t("error.bad_password"));
+							throw new Error(t("error.bad_password"), { cause: e });
 						}
 					}
 				}
@@ -1365,7 +1378,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			const plan = await this.mergeBeforePush(
 				localFiles,
 				remoteMap,
-				lastCommitSha || "",
+				//lastCommitSha || "",
 			);
 
 			// Detect whether any generated manifest changed on the remote, which
@@ -1467,7 +1480,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				}
 			}
 
-			const treeItems: any[] = [];
+			const treeItems: GitHubTreeItem[] = [];
 			const manifestPathSet = new Set<string>([
 				PLUGIN_MANIFEST_PATH,
 				WIDGET_MANIFEST_PATH,
@@ -1647,7 +1660,7 @@ export default class GitHubSyncPlugin extends Plugin {
 
 			// Deduplicate entries by path (a generated manifest and a stray local
 			// file can otherwise collide and make Git RPC fail with BadObjectState)
-			const treeMap = new Map<string, any>();
+			const treeMap = new Map<string, GitHubTreeItem>();
 			for (const t of treeItems) treeMap.set(t.path, t);
 			const dedupedTreeItems = [...treeMap.values()];
 
@@ -1788,7 +1801,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		const total = plan.toUpload.length;
 		let errors = 0;
 		const errorBodies: string[] = [];
-		const treeItems: any[] = [];
+		const treeItems: GitHubTreeItem[] = [];
 		const manifestPathSet = new Set<string>([
 			PLUGIN_MANIFEST_PATH,
 			WIDGET_MANIFEST_PATH,
@@ -1832,7 +1845,7 @@ export default class GitHubSyncPlugin extends Plugin {
 
 		for (const m of [pluginManifest, widgetManifest, themeManifest]) {
 			// Manifests are always pushed as plaintext blobs.
-			let content = m.content;
+			const content = m.content;
 			const mRes = await api.createBlob(arrayBufferToBase64(content));
 			if (mRes.ok) {
 				const mData = await mRes.json();
@@ -2038,7 +2051,7 @@ export default class GitHubSyncPlugin extends Plugin {
 					originalPath = this.deobfuscateRemotePath(item.path);
 				}
 
-				let siPath = `/${originalPath}`;
+				const siPath = `/${originalPath}`;
 
 				// Skip locked / volatile files that must never be overwritten.
 				if (
@@ -2115,7 +2128,7 @@ export default class GitHubSyncPlugin extends Plugin {
 								stateUpdated = true;
 							} catch (decryptErr) {
 								console.error(`[DIAGNOSTIC] Failed to decrypt ${siPath}`);
-								throw new Error(t("error.pull_verification_failed"));
+								throw new Error(t("error.pull_verification_failed"), { cause: decryptErr });
 							}
 						}
 					}),
@@ -2233,7 +2246,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				await siYuanRefreshFiletree();
 			}
 
-			let finishMsg = "Pull complete. Reloading...";
+			const finishMsg = "Pull complete. Reloading...";
 
 			this.lastProgress = {
 				...this.lastProgress,
@@ -2318,7 +2331,8 @@ export default class GitHubSyncPlugin extends Plugin {
 					await siYuanPutFile(writePath, decrypted);
 					updated++;
 				} catch (e) {
-					// Ignore and skip
+					// throw a warn and skip
+					console.warn(`[GitHub Sync] Failed to decrypt ${writePath}:`, e);
 				}
 				await sleep(30);
 			}
@@ -2360,7 +2374,7 @@ export default class GitHubSyncPlugin extends Plugin {
 	}
 
 	/** Fetch the commit history (used by {@link HistoryDialog}). */
-	async getHistory(): Promise<any[]> {
+	async getHistory(): Promise<GitHubCommit[]> {
 		const api = new GitHubAPI(
 			this.config.token,
 			this.config.username,
