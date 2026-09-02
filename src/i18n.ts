@@ -46,7 +46,7 @@ const locales: Record<string, LocaleMap> = {
 
 		"dialog.remove_encryption_title": "🔓 Supprimer le chiffrement",
 		"dialog.remove_encryption_body":
-			"Le dépôt distant va être ré-uploadé SANS chiffrement :\n• tout le contenu sera ré-uploadé en clair (les NOMS des carnets seront aussi restaurés)\n• tous les anciens fichiers chiffrés seront supprimés du dépôt pour que personne ne puisse les récupérer.\n\nPour continuer, saisissez votre mot de passe de chiffrement ACTUEL. S'il est incorrect, la suppression sera refusée.",
+			"Le dépôt distant va être ré-uploadé SANS chiffrement :\n• tout le contenu sera ré-uploadé en clair (les NOMS des carnets seront aussi restaurés)\n• tous les anciens fichiers chiffrés seront supprimés du dépôt pour que personne ne puisse les récupérer.\n\nConfirmez pour continuer",
 		"placeholder.current_password": "Mot de passe actuel",
 		"button.confirm": "✔️ Confirmer et ré-uploader",
 		"hint.remove_encryption":
@@ -209,7 +209,7 @@ const locales: Record<string, LocaleMap> = {
 
 		"dialog.remove_encryption_title": "🔓 Remove encryption",
 		"dialog.remove_encryption_body":
-			"The remote repository will be re-pushed WITHOUT encryption:\n• all content will be re-uploaded in cleartext (notebook NAMES will be restored too)\n• every old encrypted file will be deleted from the remote so nobody can recover it.\n\nTo continue, enter your CURRENT encryption password. If it is wrong, the operation is refused.",
+			"The remote repository will be re-pushed WITHOUT encryption:\n• all content will be re-uploaded in cleartext (notebook NAMES will be restored too)\n• every old encrypted file will be deleted from the remote so nobody can recover it.\n\n Confirm to continue",
 		"placeholder.current_password": "Current password",
 		"button.confirm": "✔️ Confirm and re-upload",
 		"hint.remove_encryption":
@@ -339,8 +339,7 @@ const locales: Record<string, LocaleMap> = {
 			"加密密码已从内存中清除。在不重新输入密码的情况下，将无法解密之前上传的数据。",
 
 		"dialog.remove_encryption_title": "🔓 移除加密",
-		"dialog.remove_encryption_body":
-			"远程仓库将以无加密方式重新上传：\n• 所有内容将以明文重新上传（笔记本名称也会恢复）\n• 所有旧加密文件都会从远程仓库删除，任何人都无法恢复它们。\n\n请先输入您当前的加密密码。如果密码错误，本次操作将被拒绝。",
+		"dialog.remove_encryption_body": "远程仓库将被重新推送且不使用加密：\n• 所有内容将以明文形式重新上传（笔记本名称也将恢复）\n• 每一个旧的加密文件都将从远程仓库删除，以确保无人可以恢复。\n\n 确认以继续",
 		"placeholder.current_password": "当前密码",
 		"button.confirm": "✔️ 确认并重新上传",
 		"hint.remove_encryption":

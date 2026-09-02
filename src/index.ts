@@ -59,7 +59,7 @@ import {
 	getDeterministicSalt,
 	deriveKeys,
 	encryptFile,
-	decryptFile,
+	//decryptFile,
 	isEncryptedBuffer,
 } from "./crypto";
 import {
@@ -512,7 +512,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		forgetBtn.title = t("hint.remove_encryption");
 		forgetBtn.textContent = t("button.forget_password");
 		forgetBtn.onclick = () => {
-			this.removeEncryptionWithPassword(pIn);
+			this.removeEncryptionFlow(pIn);
 		};
 		btnRow.appendChild(forgetBtn);
 
@@ -606,11 +606,11 @@ export default class GitHubSyncPlugin extends Plugin {
 	/**
 	 * Open the "remove encryption" confirmation dialog.
 	 *
-	 * Requires the current password: the whole repository is re-pushed in
+	 * Requires explicit double confirmation: the whole repository is re-pushed in
 	 * cleartext and the old encrypted blobs are deleted. Refuses to run while
 	 * another task is active.
 	 */
-	private removeEncryptionWithPassword(pIn: HTMLInputElement) {
+	private removeEncryptionFlow(pIn: HTMLInputElement) {
 		if (this.activeTask) {
 			showMessage(t("action.push"), 4000, "error");
 			return;
@@ -618,58 +618,49 @@ export default class GitHubSyncPlugin extends Plugin {
 		const dialog = new Dialog({
 			title: t("dialog.remove_encryption_title"),
 			content: `
-                <div class="b3-dialog__content" style="padding:16px;">
-                    <div style="margin-bottom:12px;line-height:1.7;white-space:pre-wrap;">${t("dialog.remove_encryption_body")}</div>
-                    <input id="remove-encryption-pwd" class="b3-text-field fn__block" type="password" placeholder="${t("placeholder.current_password")}" style="margin-bottom:12px;" />
-                    <div style="font-size:12px;opacity:.65;">${t("hint.remove_encryption")}</div>
+            <div class="b3-dialog__content" style="padding:16px;">
+                <div style="margin-bottom:12px;line-height:1.7;white-space:pre-wrap;">${t("dialog.remove_encryption_body")}</div>
+                <div style="margin-top:16px;padding:12px;background:var(--b3-theme-error-background, rgba(234, 76, 137, 0.1));color:var(--b3-theme-error, #ea4c89);border-radius:4px;font-weight:bold;">
+                    WARNING: This action will push your entire repository again as UNENCRYPTED. All files will be visible in plain text on the remote.
                 </div>
-                <div class="b3-dialog__action" style="padding:8px 16px;border-top:1px solid var(--b3-border-color);">
-                    <button id="remove-encryption-confirm" class="b3-button b3-button--outline">${t("button.confirm")}</button>
-                    <button id="remove-encryption-cancel" class="b3-button b3-button--outline" style="margin-left:8px;">${t("button.close")}</button>
-                </div>
-            `,
+            </div>
+            <div class="b3-dialog__action" style="padding:8px 16px;border-top:1px solid var(--b3-border-color);">
+                <button id="remove-encryption-confirm" class="b3-button b3-button--outline b3-button--error">${t("button.confirm")}</button>
+                <button id="remove-encryption-cancel" class="b3-button b3-button--outline" style="margin-left:8px;">${t("button.close")}</button>
+            </div>
+        `,
 			width: window.innerWidth < 600 ? `${window.innerWidth - 32}px` : "540px",
 		});
-		const pwdEl = dialog.element.querySelector<HTMLInputElement>('#remove-encryption-pwd');
+
 		dialog.element.querySelector('#remove-encryption-cancel').addEventListener("click", () => dialog.destroy());
-		// On confirm: validate the password is present, then hand over to the
-		// async re-push flow. The password field is cleared on success.
-		const confirm = async () => {
-			const oldPwd = pwdEl.value;
-			if (!oldPwd.trim()) {
-				showMessage(t("error.password_required"), 6000, "error");
-				pwdEl.focus();
-				return;
-			}
+
+		const confirmAction = async () => {
+			const doubleCheck = confirm("Are you absolutely sure you want to remove encryption? Your entire repository will be pushed as unencrypted plaintext.");
+			if (!doubleCheck) return;
+
 			dialog.destroy();
 			try {
-				await this.removeEncryptionToPlain(oldPwd.trim());
+				await this.removeEncryptionToPlain();
 				pIn.value = "";
 				showMessage(t("msg.encryption_removed"), 8000);
 			} catch (e) {
 				showMessage(friendlyError(e), 8000, "error");
 			}
 		};
-		dialog.element.querySelector('#remove-encryption-confirm').addEventListener("click", confirm);
-		// Allow confirming with the Enter key while focused on the field.
-		pwdEl.addEventListener("keydown", (e) => {
-			if (e.key === "Enter") confirm();
-		});
-		pwdEl.focus();
+
+		dialog.element.querySelector('#remove-encryption-confirm').addEventListener("click", confirmAction);
 	}
 
 	/**
 	 * Perform the actual "remove encryption" operation.
 	 *
 	 * Steps:
-	 *   1. Verify the old password against a real encrypted blob if any exists
-	 *      on the remote (deriving the keys and attempting a decrypt).
-	 *   2. Re-push the whole repository in cleartext via {@link rePushAllPlain}.
-	 *   3. Clear the password setting and delete the old encrypted blobs.
+	 *   1. Re-push the whole repository in cleartext via {@link rePushAllPlain}.
+	 *   2. Clear the password setting and delete the old encrypted blobs.
 	 *
 	 * Throws on failure; the caller shows the friendly error.
 	 */
-	private async removeEncryptionToPlain(oldPassword: string) {
+	private async removeEncryptionToPlain() {
 		if (!this.config.token) throw new Error(t("msg.configure_plugin"));
 		const api = new GitHubAPI(
 			this.config.token,
@@ -693,7 +684,7 @@ export default class GitHubSyncPlugin extends Plugin {
 			const branch = repoInfo.default_branch || "main";
 			const refRes = await api.getRef(branch);
 			if (!refRes.ok) {
-				// Nothing usable to decrypt on the remote, just clear the setting.
+				// Nothing usable on the remote, just clear the setting.
 				this.keysCache = null;
 				this.config.encryptionPassword = undefined;
 				await this.saveData(STORAGE_KEY, this.config);
@@ -710,45 +701,6 @@ export default class GitHubSyncPlugin extends Plugin {
 			const lastCommitSha = refData.object.sha;
 			const lastCommit = await (await api.getCommit(lastCommitSha)).json();
 			const remoteTree = (await api.getRemoteTree(lastCommit.tree.sha)) as GitHubTreeItem[];
-
-			// Find an actually-encrypted blob so the OLD password can be verified.
-			let verifyItem: GitHubTreeItem | null = null;
-			for (const item of remoteTree) {
-				if (item.type !== "blob") continue;
-				if (
-					!item.path.startsWith(`${SYNC_ROOT}/enc/`) &&
-					!item.path.endsWith(`/${NOTEBOOK_MANIFEST_FILE}`)
-				)
-					continue;
-				const buf = await api.downloadBlob(item.sha);
-				if (buf && isEncryptedBuffer(buf)) {
-					verifyItem = item;
-					break;
-				}
-			}
-
-			if (verifyItem) {
-				this.updateProgress(
-					2,
-					t("progress.removing_encryption"),
-					t("progress.verifying_password"),
-				);
-				// Verify the supplied password by attempting a real decrypt.
-				const salt = await getDeterministicSalt(
-					this.config.username.trim(),
-					this.config.repo.trim(),
-				);
-				const verifyBuf = await api.downloadBlob(verifyItem.sha);
-				if (!verifyBuf) {
-					throw new Error(t("error.bad_password"));
-				}
-				try {
-					const keys = await deriveKeys(oldPassword, salt);
-					await decryptFile(verifyBuf, keys);
-				} catch (e) {
-					throw new Error(t("error.bad_password"), { cause: e });
-				}
-			}
 
 			// Re-push the whole repository as plaintext and delete the old
 			// encrypted blobs so nothing can be recovered from the remote.
