@@ -92,7 +92,7 @@ export const PLUGIN_SELF_NAME = "siyuan-github-sync";
  * through SiYuan's `saveData()` API, which keeps them in the workspace's data
  * store rather than in the code repository.
  */
-export interface GitHubConfig {
+export interface GitPluginConfig {
 	/** GitHub account / organisation that owns the repository. */
 	username: string;
 	/** Name of the GitHub repository to sync with. */
@@ -112,7 +112,7 @@ export interface GitHubConfig {
 }
 
 /** Sensible defaults applied when no saved configuration exists yet. */
-export const DEFAULT_CONFIG: GitHubConfig = {
+export const DEFAULT_CONFIG: GitPluginConfig = {
 	username: "",
 	repo: "",
 	token: "",

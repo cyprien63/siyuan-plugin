@@ -23,10 +23,71 @@
  *   - Manifests (plugins/widgets/themes/notebooks) are generated locally and
  *     pushed next to the data instead of syncing raw folders.
  */
+import { Plugin } from "siyuan";
+import { SyncEngine } from "./SyncEngine";
+import { SettingsUI } from "./SettingsUI";
+import { SyncStateLedger } from "./SyncStateLedger";
+import { CryptoModule } from "./crypto";
+import { GitHubAPI } from "./github-api";
+import { t } from "./i18n";
+import { STORAGE_KEY, DEFAULT_CONFIG, GitPluginConfig } from "./types";
+
+export default class GitHubSyncPlugin extends Plugin {
+	private engine!: SyncEngine;
+	private ui!: SettingsUI;
+	private ledger!: SyncStateLedger;
+	public config: GitPluginConfig = { ...DEFAULT_CONFIG };
+
+	async onload() {
+		this.addIcons(
+			`<symbol id="iconGitHubUpload" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 13v-4H8l4-4 4 4h-3v4h-2z"/></symbol><symbol id="iconGitHubDownload" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 7v4h3l-4 4-4-4h3V9h2z"/></symbol><symbol id="iconGitHistory" viewBox="0 0 24 24"><path fill="currentColor" d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></symbol>`,
+		);
+
+		const saved = await this.loadData(STORAGE_KEY);
+		if (saved) {
+			this.config = { ...DEFAULT_CONFIG, ...saved };
+		}
+
+		const api = new GitHubAPI(
+			this.config.token,
+			this.config.username,
+			this.config.repo,
+		);
+
+		// initialize crypto module
+		const crypto = new CryptoModule(this.config);
+
+		// initialize sync state ledger
+		this.ledger = new SyncStateLedger(this);
+
+		// initialize backend plugin operations
+		this.engine = new SyncEngine(api, crypto, this.ledger, this.config);
+
+		// initialize settings UI
+		this.ui = new SettingsUI(this, this.engine);
+
+		this.ui.registerSettings();
+
+		this.addTopBar({
+			icon: "iconGitHubUpload",
+			title: t("top.push_title"),
+			position: "right",
+			callback: () => this.engine.pushToGitHub(),
+		});
+
+		this.addTopBar({
+			icon: "iconGitHubDownload",
+			title: t("top.pull_title"),
+			position: "right",
+			callback: () => this.engine.pullFromGitHub(),
+		});
+	}
+}
+
 import { Plugin, Setting, Dialog, showMessage } from "siyuan";
 import "./index.scss";
 import {
-	GitHubConfig,
+	GitPluginConfig,
 	GitHubCommit,
 	DEFAULT_CONFIG,
 	STORAGE_KEY,
@@ -128,7 +189,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		return remotePath;
 	}
 
-	private config: GitHubConfig = { ...DEFAULT_CONFIG };
+	private config: GitPluginConfig = { ...DEFAULT_CONFIG };
 	/** Currently running operation ("push"/"pull"), or null when idle. */
 	private activeTask: "push" | "pull" | null = null;
 	/** Progress UI instance currently on screen, if any. */
@@ -151,7 +212,10 @@ export default class GitHubSyncPlugin extends Plugin {
 	 * derived from. Recomputing keys is expensive (Argon2/PBKDF2), so the
 	 * result is reused until the password changes.
 	 */
-	private keysCache: { password?: string; promise: Promise<CryptoKey[] | null> } | null = null;
+	private keysCache: {
+		password?: string;
+		promise: Promise<CryptoKey[] | null>;
+	} | null = null;
 
 	/**
 	 * When true, the plugin re-pushes the whole repo WITHOUT encryption (used by
@@ -167,37 +231,37 @@ export default class GitHubSyncPlugin extends Plugin {
 	 * the expensive derivation runs only once per password.
 	 */
 	private async deriveRepoKeys(): Promise<CryptoKey[] | null> {
-    if (!this.config.encryptionPassword || this.removeEncryption) return null;
+		if (!this.config.encryptionPassword || this.removeEncryption) return null;
 
-    // Return the cached promise if the password hasn't changed
-    if (this.keysCache?.password === this.config.encryptionPassword) {
-        return this.keysCache.promise;
-    }
+		// Return the cached promise if the password hasn't changed
+		if (this.keysCache?.password === this.config.encryptionPassword) {
+			return this.keysCache.promise;
+		}
 
-    // Wrap the derivation in a single Promise to handle concurrent calls safely
-    const promise = (async () => {
-        try {
-            const username = this.config.username.trim();
-            const repo = this.config.repo.trim();
-            if (!username || !repo) {
-                console.error(
-                    "[GitHub Sync] Username and repo must be set for deterministic salt derivation.",
-                );
-                return null;
-            }
+		// Wrap the derivation in a single Promise to handle concurrent calls safely
+		const promise = (async () => {
+			try {
+				const username = this.config.username.trim();
+				const repo = this.config.repo.trim();
+				if (!username || !repo) {
+					console.error(
+						"[GitHub Sync] Username and repo must be set for deterministic salt derivation.",
+					);
+					return null;
+				}
 
-            // Generate static salt based on repo identity
-            const saltBase64 = await getDeterministicSalt(username, repo);
-            return await deriveKeys(this.config.encryptionPassword, saltBase64);
-        } catch (e) {
-            console.error("[GitHub Sync] Key derivation failed:", e);
-            return null;
-        }
-    })();
+				// Generate static salt based on repo identity
+				const saltBase64 = await getDeterministicSalt(username, repo);
+				return await deriveKeys(this.config.encryptionPassword, saltBase64);
+			} catch (e) {
+				console.error("[GitHub Sync] Key derivation failed:", e);
+				return null;
+			}
+		})();
 
-    // Cache the promise alongside the password used to generate it
-    this.keysCache = { password: this.config.encryptionPassword, promise };
-    return promise;
+		// Cache the promise alongside the password used to generate it
+		this.keysCache = { password: this.config.encryptionPassword, promise };
+		return promise;
 	}
 
 	/** Encrypt content if encryption is enabled; otherwise return it as-is. */
@@ -229,7 +293,9 @@ export default class GitHubSyncPlugin extends Plugin {
 			console.error(
 				`[GitHub Sync] maybeDecrypt failed: ${msg}. firstBytes=${snippet}`,
 			);
-			throw new Error(`Decryption failed: Verify your password. (${msg})`, { cause: e });
+			throw new Error(`Decryption failed: Verify your password. (${msg})`, {
+				cause: e,
+			});
 		}
 	}
 
@@ -251,7 +317,10 @@ export default class GitHubSyncPlugin extends Plugin {
 				setLocale(this.config.language ?? "en");
 				(window as Window).__github_sync_locale = getLocale();
 			} catch (e) {
-				console.error(`[GitHub Sync] Failed to load locale '${this.config.language}'`, e);
+				console.error(
+					`[GitHub Sync] Failed to load locale '${this.config.language}'`,
+					e,
+				);
 			}
 		}
 		this.registerSettings();
@@ -335,117 +404,6 @@ export default class GitHubSyncPlugin extends Plugin {
 	 * password fields have a show/hide eye toggle.
 	 */
 	private registerSettings() {
-		const uIn = this.mkInput(t("setting.github_user"), this.config.username);
-		const rIn = this.mkInput(t("setting.github_repo"), this.config.repo);
-		const tIn = this.mkInput(
-			t("setting.github_token"),
-			this.config.token,
-			"password",
-		);
-
-		const t_Toggle = document.createElement("button");
-		t_Toggle.type = "button";
-		t_Toggle.className = "b3-button b3-button--outline";
-		t_Toggle.style.cssText = "margin-left:8px;padding:4px 8px;font-size:14px;";
-		t_Toggle.textContent = "👁️";
-		// Toggle the token field between password and plain-text visibility.
-		t_Toggle.onclick = () => {
-			if (tIn.type === "password") {
-				tIn.type = "text";
-				t_Toggle.textContent = "🙈";
-			} else {
-				tIn.type = "password";
-				t_Toggle.textContent = "👁️";
-			}
-		};
-
-		const gIn = this.mkInput(
-			t("setting.groq_key"),
-			this.config.groqKey,
-			"password",
-		);
-
-		const dIn = document.createElement("input");
-		dIn.type = "checkbox";
-		dIn.checked = this.config.showDiff;
-		dIn.style.cssText = "width:16px;height:16px;cursor:pointer;margin:0;";
-
-		const tBtn = document.createElement("button");
-		tBtn.className = "b3-button b3-button--outline fn__block";
-		tBtn.textContent = t("button.test_github");
-		// Test the connection: create an API client from the current field values
-		// and show an OK / Error toast accordingly.
-		tBtn.onclick = async () => {
-			tBtn.disabled = true;
-			const api = new GitHubAPI(tIn.value.trim(), uIn.value, rIn.value);
-			if (await api.testConnection()) showMessage(t("status.ok"));
-			else showMessage(t("status.error"), 6000, "error");
-			tBtn.disabled = false;
-		};
-
-		const pIn = this.mkInput(
-			t("setting.encryption_password"),
-			this.config.encryptionPassword || "",
-			"password",
-		);
-		pIn.title = t("hint.encryption_password");
-
-		const pToggle = document.createElement("button");
-		pToggle.type = "button";
-		pToggle.className = "b3-button b3-button--outline";
-		pToggle.style.cssText = "margin-left:8px;padding:4px 8px;font-size:14px;";
-		pToggle.textContent = "👁️";
-		// Toggle the encryption-password field visibility.
-		pToggle.onclick = () => {
-			if (pIn.type === "password") {
-				pIn.type = "text";
-				pToggle.textContent = "🙈";
-			} else {
-				pIn.type = "password";
-				pToggle.textContent = "👁️";
-			}
-		};
-
-		const eBtn = document.createElement("button");
-		eBtn.className = "b3-button b3-button--outline fn__block";
-		eBtn.textContent = t("button.export");
-		// Export the current settings to a downloadable JSON file. Warns the
-		// user because the file contains the token / Groq key / password.
-		eBtn.onclick = () => {
-			const hasToken = !!tIn.value.trim();
-			const hasGroq = !!gIn.value.trim();
-			const hasPassword = !!pIn.value.trim();
-			const warnParts: string[] = [];
-			if (hasToken) warnParts.push(t("part.the") + "GitHub token");
-			if (hasGroq) warnParts.push(t("part.the") + "the Groq API key");
-			if (hasPassword) warnParts.push(t("part.the") + "encryption password");
-
-			if (warnParts.length > 0) {
-				const ok = confirm(
-					`${t("msg.export_warning_prefix")} ${warnParts.join(t("part.and"))}${t("part.export_warning_suffix")}`,
-				);
-				if (!ok) return;
-			}
-			const cfg: PluginCfg = {
-				username: uIn.value.trim(),
-				repo: rIn.value.trim(),
-				token: tIn.value.trim(),
-				groqKey: gIn.value.trim(),
-				showDiff: dIn.checked,
-				language: (this.config && this.config.language) || "en",
-			};
-			if (pIn.value.trim()) cfg.encryptionPassword = pIn.value.trim();
-
-			const blob = new Blob([JSON.stringify(cfg, null, 2)], {
-				type: "application/json",
-			});
-			const a = document.createElement("a");
-			a.href = URL.createObjectURL(blob);
-			a.download = "siyuan-github-sync-config.json";
-			a.click();
-			URL.revokeObjectURL(a.href);
-			showMessage(t("msg.config_exported"));
-		};
 
 		const iBtn = document.createElement("button");
 		iBtn.className = "b3-button b3-button--outline fn__block";
@@ -477,7 +435,10 @@ export default class GitHubSyncPlugin extends Plugin {
 						try {
 							setLocale(data.language);
 						} catch {
-							console.error("[GitHub Sync] Failed to set locale from imported config:", data.language);
+							console.error(
+								"[GitHub Sync] Failed to set locale from imported config:",
+								data.language,
+							);
 						}
 					}
 					showMessage(t("msg.config_loaded"));
@@ -551,7 +512,10 @@ export default class GitHubSyncPlugin extends Plugin {
 				setLocale(langSelect.value);
 				(window as Window).__github_sync_locale = getLocale();
 			} catch {
-				console.error("[GitHub Sync] Failed to set locale from language selector:", langSelect.value);
+				console.error(
+					"[GitHub Sync] Failed to set locale from language selector:",
+					langSelect.value,
+				);
 			}
 		};
 
@@ -632,10 +596,14 @@ export default class GitHubSyncPlugin extends Plugin {
 			width: window.innerWidth < 600 ? `${window.innerWidth - 32}px` : "540px",
 		});
 
-		dialog.element.querySelector('#remove-encryption-cancel').addEventListener("click", () => dialog.destroy());
+		dialog.element
+			.querySelector("#remove-encryption-cancel")
+			.addEventListener("click", () => dialog.destroy());
 
 		const confirmAction = async () => {
-			const doubleCheck = confirm("Are you absolutely sure you want to remove encryption? Your entire repository will be pushed as unencrypted plaintext.");
+			const doubleCheck = confirm(
+				"Are you absolutely sure you want to remove encryption? Your entire repository will be pushed as unencrypted plaintext.",
+			);
 			if (!doubleCheck) return;
 
 			dialog.destroy();
@@ -648,7 +616,9 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 		};
 
-		dialog.element.querySelector('#remove-encryption-confirm').addEventListener("click", confirmAction);
+		dialog.element
+			.querySelector("#remove-encryption-confirm")
+			.addEventListener("click", confirmAction);
 	}
 
 	/**
@@ -700,7 +670,9 @@ export default class GitHubSyncPlugin extends Plugin {
 			const refData = await refRes.json();
 			const lastCommitSha = refData.object.sha;
 			const lastCommit = await (await api.getCommit(lastCommitSha)).json();
-			const remoteTree = (await api.getRemoteTree(lastCommit.tree.sha)) as GitHubTreeItem[];
+			const remoteTree = (await api.getRemoteTree(
+				lastCommit.tree.sha,
+			)) as GitHubTreeItem[];
 
 			// Re-push the whole repository as plaintext and delete the old
 			// encrypted blobs so nothing can be recovered from the remote.
@@ -897,7 +869,11 @@ export default class GitHubSyncPlugin extends Plugin {
 			}
 		}
 
-		this.updateProgress(88, t("progress.cleaning_enc"), t("progress.creating_tree"));
+		this.updateProgress(
+			88,
+			t("progress.cleaning_enc"),
+			t("progress.creating_tree"),
+		);
 
 		// Build the tree in chunks on top of the previous tree SHA, retrying on
 		// transient server errors (5xx).
@@ -914,18 +890,20 @@ export default class GitHubSyncPlugin extends Plugin {
 			let attempts = 0;
 			const maxAttempts = 5;
 			while (attempts < maxAttempts) {
-    treeRes = await api.createTree(currentTreeSha, chunk);
-    if (treeRes.ok) break;
-    if (treeRes.status >= 500) {
-        attempts++;
-        await sleep(attempts * 5000);
-    } else {
-        break;
-    }
+				treeRes = await api.createTree(currentTreeSha, chunk);
+				if (treeRes.ok) break;
+				if (treeRes.status >= 500) {
+					attempts++;
+					await sleep(attempts * 5000);
+				} else {
+					break;
+				}
 			}
 			if (!treeRes || !treeRes.ok) {
-    const errText = (await treeRes?.text()) || "Unknown API Error";
-    throw new Error(`[GitHub Sync] Tree creation failed (Chunk ${Math.floor(i / CHUNK_SIZE) + 1}): ${treeRes?.statusText} - ${errText}`);
+				const errText = (await treeRes?.text()) || "Unknown API Error";
+				throw new Error(
+					`[GitHub Sync] Tree creation failed (Chunk ${Math.floor(i / CHUNK_SIZE) + 1}): ${treeRes?.statusText} - ${errText}`,
+				);
 			}
 			const treeData = await treeRes.json();
 			currentTreeSha = treeData.sha;
@@ -1784,7 +1762,7 @@ export default class GitHubSyncPlugin extends Plugin {
 					type: "blob",
 					sha: blobData.sha,
 				});
-							uploaded++;
+				uploaded++;
 			} else {
 				const errBody = await blobRes.text();
 				console.error(
@@ -2080,7 +2058,9 @@ export default class GitHubSyncPlugin extends Plugin {
 								stateUpdated = true;
 							} catch (decryptErr) {
 								console.error(`[DIAGNOSTIC] Failed to decrypt ${siPath}`);
-								throw new Error(t("error.pull_verification_failed"), { cause: decryptErr });
+								throw new Error(t("error.pull_verification_failed"), {
+									cause: decryptErr,
+								});
 							}
 						}
 					}),
@@ -2101,46 +2081,83 @@ export default class GitHubSyncPlugin extends Plugin {
 			// 3. Process Plugins, Widgets, and Themes manifest files
 			// Download each manifest, parse it, and install the packages that
 			// are missing locally.
-			const onProgress = (pct: number, status: string, details: string) => this.updateProgress(pct, status, details);
+			const onProgress = (pct: number, status: string, details: string) =>
+				this.updateProgress(pct, status, details);
 
-			const manifestItem = remoteItems.find(i => i.path === PLUGIN_MANIFEST_PATH);
+			const manifestItem = remoteItems.find(
+				(i) => i.path === PLUGIN_MANIFEST_PATH,
+			);
 			let pluginsInstalled: number | null;
 			if (manifestItem) {
 				const manifestContent = await api.downloadBlob(manifestItem.sha);
 				if (manifestContent) {
 					try {
-						const manifest = JSON.parse(new TextDecoder().decode(await this.maybeDecrypt(manifestContent)));
-						pluginsInstalled = await installMissingPlugins(manifest, onProgress);
-					} catch { /* ignore */ }
+						const manifest = JSON.parse(
+							new TextDecoder().decode(
+								await this.maybeDecrypt(manifestContent),
+							),
+						);
+						pluginsInstalled = await installMissingPlugins(
+							manifest,
+							onProgress,
+						);
+					} catch {
+						/* ignore */
+					}
 				}
 			}
 
-			const widgetManifestItem = remoteItems.find(i => i.path === WIDGET_MANIFEST_PATH);
+			const widgetManifestItem = remoteItems.find(
+				(i) => i.path === WIDGET_MANIFEST_PATH,
+			);
 			let widgetsInstalled: number | null;
 			if (widgetManifestItem) {
-				const widgetManifestContent = await api.downloadBlob(widgetManifestItem.sha);
+				const widgetManifestContent = await api.downloadBlob(
+					widgetManifestItem.sha,
+				);
 				if (widgetManifestContent) {
 					try {
-						const wManifest = JSON.parse(new TextDecoder().decode(await this.maybeDecrypt(widgetManifestContent)));
-						widgetsInstalled = await installMissingWidgets(wManifest, onProgress);
-					} catch { /* ignore */ }
+						const wManifest = JSON.parse(
+							new TextDecoder().decode(
+								await this.maybeDecrypt(widgetManifestContent),
+							),
+						);
+						widgetsInstalled = await installMissingWidgets(
+							wManifest,
+							onProgress,
+						);
+					} catch {
+						/* ignore */
+					}
 				}
 			}
 
-			const themeManifestItem = remoteItems.find(i => i.path === THEME_MANIFEST_PATH);
+			const themeManifestItem = remoteItems.find(
+				(i) => i.path === THEME_MANIFEST_PATH,
+			);
 			let themesInstalled: number | null;
 			if (themeManifestItem) {
-				const themeManifestContent = await api.downloadBlob(themeManifestItem.sha);
+				const themeManifestContent = await api.downloadBlob(
+					themeManifestItem.sha,
+				);
 				if (themeManifestContent) {
 					try {
-						const tManifest = JSON.parse(new TextDecoder().decode(await this.maybeDecrypt(themeManifestContent)));
+						const tManifest = JSON.parse(
+							new TextDecoder().decode(
+								await this.maybeDecrypt(themeManifestContent),
+							),
+						);
 						themesInstalled = await installMissingThemes(tManifest, onProgress);
-					} catch { /* ignore */ }
+					} catch {
+						/* ignore */
+					}
 				}
 			}
 
 			// provisory debug line, may include this info in the UI later on
-			console.log(`[GitHub Sync] Installed ${pluginsInstalled ?? 0} plugins, ${widgetsInstalled ?? 0} widgets, ${themesInstalled ?? 0} themes from manifests.`);
+			console.log(
+				`[GitHub Sync] Installed ${pluginsInstalled ?? 0} plugins, ${widgetsInstalled ?? 0} widgets, ${themesInstalled ?? 0} themes from manifests.`,
+			);
 
 			// 4. Remove local files that no longer exist on the remote
 			// Build a set of all "plaintext" remote paths (de-obfuscated) to
@@ -2175,11 +2192,7 @@ export default class GitHubSyncPlugin extends Plugin {
 				// Plugins are managed through their manifest, never deleted here.
 				if (localPath.startsWith(`${SYNC_ROOT}/plugins/`)) continue;
 
-				this.updateProgress(
-					90,
-					`Pull : delete`,
-					localPath,
-				);
+				this.updateProgress(90, `Pull : delete`, localPath);
 
 				if (await siYuanRemoveFile(`/${localPath}`)) {
 					delete syncedFiles[localPath];

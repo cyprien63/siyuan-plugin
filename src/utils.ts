@@ -221,3 +221,39 @@ export async function generateCommitMessage(
 		return "";
 	}
 }
+
+// ------------------------------------------------------------------------
+// manifest handling utils
+// ------------------------------------------------------------------------
+export const MANIFEST_PATHS = new Set([
+    PLUGIN_MANIFEST_PATH,
+    WIDGET_MANIFEST_PATH,
+    THEME_MANIFEST_PATH,
+    NOTEBOOK_MANIFEST_FILE
+]);
+
+export function isManifestPath(path: string): boolean {
+    return MANIFEST_PATHS.has(path);
+}
+
+export function getRemotePath(localPath: string, isEncrypted: boolean): string {
+    if (isManifestPath(localPath)) {
+        return localPath; // Do not obfuscate manifests
+    }
+    return isEncrypted ? obfuscatePath(localPath) : localPath;
+}
+
+export async function createGitTreeChunked(
+    api: GitHubAPI,
+    items: GitTreeItem[],
+    baseTreeSha: string
+): Promise<string> {
+    // 5xx retry logic with progressive backoff and chunking
+    const chunks = chunkArray(items, 500);
+    let currentTreeSha = baseTreeSha;
+
+    for (const chunk of chunks) {
+        currentTreeSha = await withRetry(() => api.createTree(chunk, currentTreeSha));
+    }
+    return currentTreeSha;
+}
