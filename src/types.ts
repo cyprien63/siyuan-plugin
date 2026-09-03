@@ -26,6 +26,7 @@ export const SYNC_ROOT = "data";
  * skipped during a push because GitHub blobs / SiYuan transfers get too heavy.
  */
 export const MAX_FILE_BYTES = 25_000_000;
+export const CHUNK_SIZE = 200;
 
 /**
  * Top-level workspace directories that are NEVER synced. They contain local

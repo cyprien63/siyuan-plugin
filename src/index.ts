@@ -405,73 +405,12 @@ export default class GitHubSyncPlugin extends Plugin {
 	 */
 	private registerSettings() {
 
-		const iBtn = document.createElement("button");
-		iBtn.className = "b3-button b3-button--outline fn__block";
-		iBtn.textContent = t("button.import");
-		// Import settings from a previously exported JSON file and fill the
-		// input fields. The user must press Save afterwards to persist them.
-		iBtn.onclick = () => {
-			const fi = document.createElement("input");
-			fi.type = "file";
-			fi.accept = ".json";
-			fi.onchange = async () => {
-				const file = fi.files?.[0];
-				if (!file) return;
-				try {
-					const text = await file.text();
-					const data = JSON.parse(text);
-					if (!data.username || !data.repo || !data.token) {
-						showMessage("  Invalid file", 6000, "error");
-						return;
-					}
-					uIn.value = data.username;
-					rIn.value = data.repo;
-					tIn.value = data.token;
-					gIn.value = data.groqKey || "";
-					dIn.checked = !!data.showDiff;
-					pIn.value = data.encryptionPassword || "";
-
-					if (data.language) {
-						try {
-							setLocale(data.language);
-						} catch {
-							console.error(
-								"[GitHub Sync] Failed to set locale from imported config:",
-								data.language,
-							);
-						}
-					}
-					showMessage(t("msg.config_loaded"));
-				} catch {
-					showMessage(t("error.invalid_file"), 6000, "error");
-				}
-			};
-			fi.click();
-		};
-
-		const btnRow = document.createElement("div");
-		btnRow.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;";
-
-		const passWrap = document.createElement("div");
-		passWrap.style.cssText = "display:flex;gap:8px;align-items:center;";
-		passWrap.appendChild(pIn);
-		passWrap.appendChild(pToggle);
-
-		const tokenWrap = document.createElement("div");
-		tokenWrap.style.cssText = "display:flex;gap:8px;align-items:center;";
-		tokenWrap.appendChild(tIn);
-		tokenWrap.appendChild(t_Toggle);
-
-		btnRow.appendChild(tBtn);
-		btnRow.appendChild(eBtn);
-		btnRow.appendChild(iBtn);
-
 		// "Forget password" triggers the remove-encryption flow: it re-pushes
 		// the whole repository in cleartext and deletes the old encrypted blobs.
 		const forgetBtn = document.createElement("button");
 		forgetBtn.className = "b3-button b3-button--outline fn__block";
 		forgetBtn.title = t("hint.remove_encryption");
-		forgetBtn.textContent = t("button.forget_password");
+		forgetBtn.textContent = t("button.reset_repo");
 		forgetBtn.onclick = () => {
 			this.removeEncryptionFlow(pIn);
 		};
@@ -565,60 +504,6 @@ export default class GitHubSyncPlugin extends Plugin {
 			title: t("setting.actions"),
 			createActionElement: () => btnRow,
 		});
-	}
-
-	/**
-	 * Open the "remove encryption" confirmation dialog.
-	 *
-	 * Requires explicit double confirmation: the whole repository is re-pushed in
-	 * cleartext and the old encrypted blobs are deleted. Refuses to run while
-	 * another task is active.
-	 */
-	private removeEncryptionFlow(pIn: HTMLInputElement) {
-		if (this.activeTask) {
-			showMessage(t("action.push"), 4000, "error");
-			return;
-		}
-		const dialog = new Dialog({
-			title: t("dialog.remove_encryption_title"),
-			content: `
-            <div class="b3-dialog__content" style="padding:16px;">
-                <div style="margin-bottom:12px;line-height:1.7;white-space:pre-wrap;">${t("dialog.remove_encryption_body")}</div>
-                <div style="margin-top:16px;padding:12px;background:var(--b3-theme-error-background, rgba(234, 76, 137, 0.1));color:var(--b3-theme-error, #ea4c89);border-radius:4px;font-weight:bold;">
-                    WARNING: This action will push your entire repository again as UNENCRYPTED. All files will be visible in plain text on the remote.
-                </div>
-            </div>
-            <div class="b3-dialog__action" style="padding:8px 16px;border-top:1px solid var(--b3-border-color);">
-                <button id="remove-encryption-confirm" class="b3-button b3-button--outline b3-button--error">${t("button.confirm")}</button>
-                <button id="remove-encryption-cancel" class="b3-button b3-button--outline" style="margin-left:8px;">${t("button.close")}</button>
-            </div>
-        `,
-			width: window.innerWidth < 600 ? `${window.innerWidth - 32}px` : "540px",
-		});
-
-		dialog.element
-			.querySelector("#remove-encryption-cancel")
-			.addEventListener("click", () => dialog.destroy());
-
-		const confirmAction = async () => {
-			const doubleCheck = confirm(
-				"Are you absolutely sure you want to remove encryption? Your entire repository will be pushed as unencrypted plaintext.",
-			);
-			if (!doubleCheck) return;
-
-			dialog.destroy();
-			try {
-				await this.removeEncryptionToPlain();
-				pIn.value = "";
-				showMessage(t("msg.encryption_removed"), 8000);
-			} catch (e) {
-				showMessage(friendlyError(e), 8000, "error");
-			}
-		};
-
-		dialog.element
-			.querySelector("#remove-encryption-confirm")
-			.addEventListener("click", confirmAction);
 	}
 
 	/**
