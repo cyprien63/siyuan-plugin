@@ -6,6 +6,8 @@
  * and the optional AI-powered commit message generation.
  */
 import { getLocale, t } from "./i18n";
+import { PLUGIN_MANIFEST_PATH, WIDGET_MANIFEST_PATH, THEME_MANIFEST_PATH, NOTEBOOK_MANIFEST_FILE, GitHubTreeItem } from "./types";
+import { GitHubAPI } from "./github-api";
 
 /**
  * Convert an ArrayBuffer to a base64 string.
@@ -245,7 +247,7 @@ export function getRemotePath(localPath: string, isEncrypted: boolean): string {
 
 export async function createGitTreeChunked(
     api: GitHubAPI,
-    items: GitTreeItem[],
+    items: GitHubTreeItem[],
     baseTreeSha: string
 ): Promise<string> {
     // 5xx retry logic with progressive backoff and chunking

@@ -7,6 +7,7 @@ import { t, setLocale } from "./i18n";
 import {
 	SYNC_ROOT,
 	MAX_FILE_BYTES,
+	SKIP_ROOT_DIRS,
 	SyncResult,
 	SyncError,
 	ManifestFile,
@@ -19,6 +20,8 @@ import {
 	THEME_MANIFEST_PATH,
 	NOTEBOOK_MANIFEST_FILE,
 	FileToSync,
+	LOCKED_EXTENSIONS,
+	SKIP_PATH_FRAGMENTS,
 } from "./types";
 import { SyncStateLedger } from "./SyncStateLedger";
 import { GitHubAPI } from "./github-api";
@@ -31,12 +34,16 @@ import {
 	generateCommitMessage,
 	createGitTreeChunked,
 } from "./utils";
-import { siYuanGetFile, collectDir, siYuanPutFile } from "./siyuan-api";
+import { siYuanGetFile, collectDir, siYuanPutFile, siYuanRemoveFile, siYuanRefreshFiletree } from "./siyuan-api";
 import {
 	generatePluginManifest,
 	generateWidgetManifest,
 	generateThemeManifest,
 	generateNotebookManifests,
+	installMissingPlugins,
+	installMissingWidgets,
+	installMissingThemes,
+	processNotebookManifests,
 } from "./manifests";
 
 export class SyncEngine extends EventEmitter {
@@ -150,7 +157,7 @@ export class SyncEngine extends EventEmitter {
 				"progress",
 				15,
 				t("progress.analysis"),
-				"Calculating pull plan...",
+				t("progress.pull_calculation"),
 			);
 			const { toPull, remotePlainSet } = await this.calculatePullPlan();
 
@@ -164,19 +171,19 @@ export class SyncEngine extends EventEmitter {
 			this.emit(
 				"progress",
 				75,
-				"Restoring environment",
-				"Processing manifests...",
+				t("progress.restore_environment"),
+				t("progress.process_manifests")
 			);
 			await this.installManifests();
 			await this.restoreNotebooks();
 
 			// 5. Cleanup local files that no longer exist on the remote
-			this.emit("progress", 85, "Cleaning up", "Deleting stale local files...");
+			this.emit("progress", 85, t("progress.cleanup"), t("progress.cleaning_local"));
 			deletedCount = await this.deleteStaleLocalFiles(remotePlainSet);
 			if (deletedCount > 0) stateUpdated = true;
 
 			// 6. Save ledger and signal SiYuan to refresh
-			this.emit("progress", 95, t("progress.finalizing"), "Updating state...");
+			this.emit("progress", 95, t("progress.finalizing"), t("progress.update_state"));
 			return await this.finalizePull(stateUpdated, deletedCount, toPull.length);
 		} catch (error) {
 			throw this.formatApiError(error);
@@ -467,7 +474,7 @@ export class SyncEngine extends EventEmitter {
 					path: remotePath,
 					mode: "100644",
 					type: "blob",
-					sha: null as any,
+					sha: null,
 				});
 				this.ledger.removeFile(d.githubPath);
 			}
@@ -535,8 +542,9 @@ export class SyncEngine extends EventEmitter {
 
 	// Pull helpers
 
-	// TODO review these functions
+	// Load latest remote commit info, return true when successful
 	private async fetchRemoteTree(): Promise<boolean> {
+		// get latest commit
 		const repoInfo = await (await this.api.getRepoInfo()).json();
 		this.currentBranch = repoInfo.default_branch || "main";
 
@@ -566,10 +574,12 @@ export class SyncEngine extends EventEmitter {
 		return true;
 	}
 
+	// get file states to figure out what to pull
 	private async calculatePullPlan(): Promise<{
 		toPull: { item: GitHubTreeItem; siPath: string; originalPath: string }[];
 		remotePlainSet: Set<string>;
 	}> {
+		// get file states to figure out what to pull
 		await this.ledger.load();
 		const toPull: {
 			item: GitHubTreeItem;
@@ -631,13 +641,14 @@ export class SyncEngine extends EventEmitter {
 				"progress",
 				15 + Math.round((processed / this.remoteTreeCache.length) * 10),
 				t("progress.analysis"),
-				`Checking ${processed}/${this.remoteTreeCache.length} remote files`,
+				t("progress.checking_remote_files")+` ${processed}/${this.remoteTreeCache.length}`,
 			);
 		}
 
 		return { toPull, remotePlainSet };
 	}
 
+	// download + write operations
 	private async downloadAndWriteFiles(
 		toPull: { item: GitHubTreeItem; siPath: string; originalPath: string }[],
 	): Promise<boolean> {
@@ -657,6 +668,7 @@ export class SyncEngine extends EventEmitter {
 					.slice(0, 50) + "...",
 			);
 
+			// concurrent file pulling through github API
 			await Promise.all(
 				chunk.map(async ({ item, siPath, originalPath }) => {
 					const content = await this.api.downloadBlob(item.sha);
@@ -684,6 +696,7 @@ export class SyncEngine extends EventEmitter {
 		return stateUpdated;
 	}
 
+	// manifest syncing
 	private async installManifests(): Promise<void> {
 		const onProgress = (pct: number, status: string, details: string) =>
 			this.emit("progress", pct, status, details);
@@ -732,7 +745,7 @@ export class SyncEngine extends EventEmitter {
 	): Promise<number> {
 		let deletedCount = 0;
 		// Iterate over keys directly from the internal ledger state
-		const knownFiles = Object.keys((this.ledger as any).state || {});
+		const knownFiles = Object.keys( this.ledger.getState() || {});
 
 		for (const localPath of knownFiles) {
 			if (remotePlainSet.has(localPath)) continue;
@@ -749,7 +762,7 @@ export class SyncEngine extends EventEmitter {
 				continue;
 			}
 
-			this.emit("progress", 85, `Pull : delete`, localPath);
+			this.emit("progress", 85, t("progress.cleanup"), localPath);
 			if (await siYuanRemoveFile(`/${localPath}`)) {
 				this.ledger.removeFile(localPath);
 				deletedCount++;
