@@ -1,9 +1,14 @@
-// backend logic for the sync engine
+// TLDR backend logic for the sync process
 // defines & manages push & pull operation pipelines
-
+// defines action callbacks to settings buttons from SettingsUI
+/**
+ * Core synchronization orchestrator.
+ * Manages the complete push and pull pipelines, handling 3-way merges,
+ * API orchestration, event emission for UI progress, and centralized error mapping.
+ */
 import { EventEmitter } from "events";
 import { showMessage, Dialog } from "siyuan";
-import { t, setLocale } from "./i18n";
+import { t, setLocale } from "../shared-utils/i18n";
 import {
 	SYNC_ROOT,
 	MAX_FILE_BYTES,
@@ -22,19 +27,18 @@ import {
 	FileToSync,
 	LOCKED_EXTENSIONS,
 	SKIP_PATH_FRAGMENTS,
-} from "./types";
+} from "../shared-utils/types";
 import { SyncStateLedger } from "./SyncStateLedger";
-import { GitHubAPI } from "./github-api";
-import { CryptoModule, isEncryptedBuffer } from "./crypto";
+import { GitHubAPI, GitHubError } from "../api/Github-api";
+import { CryptoModule } from "./CryptoModule";
 import {
 	isManifestPath,
 	calculateGitSha,
 	arrayBufferToBase64,
 	extractTextFromSyFile,
 	generateCommitMessage,
-	createGitTreeChunked,
-} from "./utils";
-import { siYuanGetFile, collectDir, siYuanPutFile, siYuanRemoveFile, siYuanRefreshFiletree } from "./siyuan-api";
+	friendlyError,
+} from "../shared-utils/utils";
 import {
 	generatePluginManifest,
 	generateWidgetManifest,
@@ -45,6 +49,7 @@ import {
 	installMissingThemes,
 	processNotebookManifests,
 } from "./manifests";
+import { SiYuanAPI } from "src/api/Siyuan-api";
 
 export class SyncEngine extends EventEmitter {
 	// Currently running operation ("push"/"pull"), or null when idle.
@@ -63,6 +68,7 @@ export class SyncEngine extends EventEmitter {
 		private crypto: CryptoModule,
 		private ledger: SyncStateLedger,
 		private config: GitPluginConfig,
+		private siyuan: SiYuanAPI
 	) {
 		super();
 	}
@@ -172,18 +178,28 @@ export class SyncEngine extends EventEmitter {
 				"progress",
 				75,
 				t("progress.restore_environment"),
-				t("progress.process_manifests")
+				t("progress.process_manifests"),
 			);
 			await this.installManifests();
 			await this.restoreNotebooks();
 
 			// 5. Cleanup local files that no longer exist on the remote
-			this.emit("progress", 85, t("progress.cleanup"), t("progress.cleaning_local"));
+			this.emit(
+				"progress",
+				85,
+				t("progress.cleanup"),
+				t("progress.cleaning_local"),
+			);
 			deletedCount = await this.deleteStaleLocalFiles(remotePlainSet);
 			if (deletedCount > 0) stateUpdated = true;
 
 			// 6. Save ledger and signal SiYuan to refresh
-			this.emit("progress", 95, t("progress.finalizing"), t("progress.update_state"));
+			this.emit(
+				"progress",
+				95,
+				t("progress.finalizing"),
+				t("progress.update_state"),
+			);
 			return await this.finalizePull(stateUpdated, deletedCount, toPull.length);
 		} catch (error) {
 			throw this.formatApiError(error);
@@ -240,7 +256,7 @@ export class SyncEngine extends EventEmitter {
 		// if encrypted, decrypt with password
 		if (verifyNode) {
 			const testBlob = await this.api.downloadBlob(verifyNode.sha);
-			if (testBlob && isEncryptedBuffer(testBlob)) {
+			if (testBlob && this.crypto.isEncryptedBuffer(testBlob)) {
 				try {
 					await this.crypto.decrypt(testBlob);
 				} catch (e) {
@@ -251,10 +267,10 @@ export class SyncEngine extends EventEmitter {
 	}
 
 	private async generateAllManifests(): Promise<ManifestFile[]> {
-		const pluginManifest = await generatePluginManifest();
-		const widgetManifest = await generateWidgetManifest();
-		const themeManifest = await generateThemeManifest();
-		const notebookManifests = await generateNotebookManifests();
+		const pluginManifest = await generatePluginManifest(this.siyuan);
+		const widgetManifest = await generateWidgetManifest(this.siyuan);
+		const themeManifest = await generateThemeManifest(this.siyuan);
+		const notebookManifests = await generateNotebookManifests(this.siyuan);
 
 		return [
 			pluginManifest,
@@ -265,7 +281,7 @@ export class SyncEngine extends EventEmitter {
 	}
 
 	private async calculateMergePlan(): Promise<MergePlan> {
-		const localFiles = (await collectDir(`/${SYNC_ROOT}`, SYNC_ROOT)).filter(
+		const localFiles = (await this.siyuan.collectDir(`/${SYNC_ROOT}`, SYNC_ROOT)).filter(
 			(f) =>
 				!isManifestPath(f.githubPath) &&
 				!f.githubPath.endsWith(`/${NOTEBOOK_MANIFEST_FILE}`),
@@ -288,7 +304,7 @@ export class SyncEngine extends EventEmitter {
 				const remoteContent = await this.api.downloadBlob(pullSha);
 				if (remoteContent) {
 					const decrypted = await this.crypto.decrypt(remoteContent);
-					await siYuanPutFile(pull.siYuanPath, decrypted);
+					await this.siyuan.putFile(pull.siYuanPath, decrypted);
 				}
 				plan.toReuse.push({ githubPath: pull.githubPath, sha: pullSha });
 			}
@@ -324,7 +340,7 @@ export class SyncEngine extends EventEmitter {
 			// concurrently check files
 			await Promise.all(
 				chunk.map(async (f) => {
-					const content = await siYuanGetFile(f.siYuanPath);
+					const content = await this.siyuan.getFile(f.siYuanPath);
 					if (!content) {
 						processed++;
 						return;
@@ -404,6 +420,12 @@ export class SyncEngine extends EventEmitter {
 		return { status: "success", message: t("msg.no_changes_none") };
 	}
 
+	private getTargetRemotePath(localPath: string): string {
+		return isManifestPath(localPath)
+			? localPath
+			: this.crypto.obfuscateRemotePath(localPath);
+	}
+
 	private async uploadEncryptedBlobs(
 		plan: MergePlan,
 		manifests: ManifestFile[],
@@ -414,9 +436,7 @@ export class SyncEngine extends EventEmitter {
 
 		// prepare treeItemsToCommit
 		for (const r of plan.toReuse) {
-			const remotePath = isManifestPath(r.githubPath)
-				? r.githubPath
-				: this.crypto.obfuscateRemotePath(r.githubPath);
+			const remotePath = this.getTargetRemotePath(r.githubPath);
 			this.treeItemsToCommit.push({
 				path: remotePath,
 				mode: "100644",
@@ -434,7 +454,7 @@ export class SyncEngine extends EventEmitter {
 				u.githubPath,
 			);
 
-			const content = await siYuanGetFile(u.siYuanPath);
+			const content = await this.siyuan.getFile(u.siYuanPath);
 			if (!content) continue;
 
 			const encrypted = await this.crypto.encrypt(content);
@@ -442,9 +462,7 @@ export class SyncEngine extends EventEmitter {
 
 			if (blobRes.ok) {
 				const blobData = await blobRes.json();
-				const remotePath = isManifestPath(u.githubPath)
-					? u.githubPath
-					: this.crypto.obfuscateRemotePath(u.githubPath);
+				const remotePath = this.getTargetRemotePath(u.githubPath);
 
 				this.treeItemsToCommit.push({
 					path: remotePath,
@@ -466,9 +484,7 @@ export class SyncEngine extends EventEmitter {
 		}
 
 		for (const d of plan.toDelete) {
-			const remotePath = isManifestPath(d.githubPath)
-				? d.githubPath
-				: this.crypto.obfuscateRemotePath(d.githubPath);
+			const remotePath = this.getTargetRemotePath(d.githubPath);
 			if (actualRemotePathSet.has(remotePath)) {
 				this.treeItemsToCommit.push({
 					path: remotePath,
@@ -497,6 +513,36 @@ export class SyncEngine extends EventEmitter {
 		}
 	}
 
+	private async createTreeChunked(
+		items: GitHubTreeItem[],
+		baseTreeSha: string,
+		progressLabel: string,
+	): Promise<string> {
+		let currentTreeSha = baseTreeSha;
+		const total = items.length;
+
+		if (total === 0) return currentTreeSha;
+
+		for (let i = 0; i < total; i += CHUNK_SIZE) {
+			const chunk = items.slice(i, i + CHUNK_SIZE);
+
+			// Progress formatting for UI
+			const percent = 50 + Math.round((i / total) * 30);
+			this.emit("progress", percent, progressLabel, `${i}/${total}`);
+
+			const treeRes = await this.api.createTree(currentTreeSha, chunk);
+			if (!treeRes.ok) {
+				throw new Error(`Tree creation failed: ${await treeRes.text()}`);
+			}
+
+			const treeData = await treeRes.json();
+			currentTreeSha = treeData.sha;
+		}
+
+		this.emit("progress", 85, t("progress.finalizing"), `${total}/${total}`);
+		return currentTreeSha;
+	}
+
 	private async finalizeCommit(plan: MergePlan): Promise<SyncResult> {
 		const baseTreeRes = await this.api.getCommit(this.lastCommitSha!);
 		const baseTreeData = await baseTreeRes.json();
@@ -505,10 +551,10 @@ export class SyncEngine extends EventEmitter {
 		for (const t of this.treeItemsToCommit) treeMap.set(t.path, t);
 		const dedupedTreeItems = Array.from(treeMap.values());
 
-		const newTreeSha = await createGitTreeChunked(
-			this.api,
+		const newTreeSha = await this.createTreeChunked(
 			dedupedTreeItems,
 			baseTreeData.tree.sha,
+			t("progress.creating_tree"),
 		);
 
 		const aiMsg = await generateCommitMessage(
@@ -624,7 +670,7 @@ export class SyncEngine extends EventEmitter {
 					const remoteSynced = this.ledger.getRemoteSha(originalPath);
 
 					// Compare actual local content to prevent ghost conflicts if a local file was deleted
-					const localContent = await siYuanGetFile(siPath);
+					const localContent = await this.siyuan.getFile(siPath);
 					const localSha =
 						localContent && localContent.byteLength > 0
 							? await calculateGitSha(localContent)
@@ -641,7 +687,8 @@ export class SyncEngine extends EventEmitter {
 				"progress",
 				15 + Math.round((processed / this.remoteTreeCache.length) * 10),
 				t("progress.analysis"),
-				t("progress.checking_remote_files")+` ${processed}/${this.remoteTreeCache.length}`,
+				t("progress.checking_remote_files") +
+				` ${processed}/${this.remoteTreeCache.length}`,
 			);
 		}
 
@@ -675,7 +722,7 @@ export class SyncEngine extends EventEmitter {
 					if (content && content.byteLength > 0) {
 						try {
 							const decrypted = await this.crypto.decrypt(content);
-							await siYuanPutFile(siPath, decrypted);
+							await this.siyuan.putFile(siPath, decrypted);
 
 							const ptSha = await calculateGitSha(decrypted);
 							this.ledger.updateFile(originalPath, ptSha, item.sha);
@@ -715,7 +762,7 @@ export class SyncEngine extends EventEmitter {
 					try {
 						// Note: Core manifests are pushed as plaintext, so we bypass this.crypto.decrypt
 						const text = new TextDecoder().decode(content);
-						await installer(JSON.parse(text), onProgress);
+						await installer(this.siyuan, JSON.parse(text), onProgress);
 					} catch (err) {
 						console.error(
 							`[GitHub Sync] Failed to install manifest ${path}:`,
@@ -730,6 +777,7 @@ export class SyncEngine extends EventEmitter {
 	private async restoreNotebooks(): Promise<void> {
 		try {
 			await processNotebookManifests(
+				this.siyuan,
 				this.remoteTreeCache,
 				this.api,
 				(buf) => this.crypto.decrypt(buf), // Notebook manifests are encrypted during push
@@ -745,7 +793,7 @@ export class SyncEngine extends EventEmitter {
 	): Promise<number> {
 		let deletedCount = 0;
 		// Iterate over keys directly from the internal ledger state
-		const knownFiles = Object.keys( this.ledger.getState() || {});
+		const knownFiles = Object.keys(this.ledger.getState() || {});
 
 		for (const localPath of knownFiles) {
 			if (remotePlainSet.has(localPath)) continue;
@@ -763,7 +811,7 @@ export class SyncEngine extends EventEmitter {
 			}
 
 			this.emit("progress", 85, t("progress.cleanup"), localPath);
-			if (await siYuanRemoveFile(`/${localPath}`)) {
+			if (await this.siyuan.removeFile(`/${localPath}`)) {
 				this.ledger.removeFile(localPath);
 				deletedCount++;
 			}
@@ -782,7 +830,7 @@ export class SyncEngine extends EventEmitter {
 		}
 
 		if (deletedCount > 0 || stateUpdated) {
-			await siYuanRefreshFiletree();
+			await this.siyuan.refreshFiletree();
 			setTimeout(() => window.location.reload(), 1500); // Reload SiYuan to rebuild indexes
 		}
 
@@ -795,9 +843,45 @@ export class SyncEngine extends EventEmitter {
 		};
 	}
 
+	// -------------------------------------------------------
+
 	// Error Formatting
-	private formatApiError(error: Error): SyncError {
-		return new SyncError(500, error.message || "Unknown synchronization error");
+	private formatApiError(error: unknown): SyncError {
+		// Pass through already-formatted SyncErrors
+		if (error instanceof SyncError) return error;
+
+		// Map GitHub API HTTP status codes to specific behaviors
+		if (error instanceof GitHubError) {
+			let localMessage = t("error.pull_verification_failed"); // Fallback
+
+			switch (error.status) {
+				case 401:
+					localMessage = t("error.token_invalid");
+					break;
+				case 403:
+				case 429:
+					localMessage = t("error.rate_limit");
+					break;
+				case 404:
+					localMessage = t("error.repo_not_found");
+					break;
+				case 409:
+					localMessage = t("msg.repo_empty"); // Or a dedicated conflict key
+					break;
+				case 413:
+					localMessage = t("error.file_too_large");
+					break;
+				case 422:
+					// Git RPC 422 usually means tree validation failed (e.g., duplicated paths)
+					localMessage = t("error.invalid_file") + " (Git Tree Validation)";
+					break;
+			}
+			return new SyncError(error.status, localMessage, error);
+		}
+
+		// Fallback for network timeouts or JS runtime errors
+		const fallbackMessage = friendlyError(error);
+		return new SyncError(500, fallbackMessage, error);
 	}
 
 	// Action buttons operations
@@ -962,37 +1046,10 @@ export class SyncEngine extends EventEmitter {
 			const total = treeItems.length;
 
 			if (total > 0) {
-				let currentTreeSha = lastCommit.tree.sha;
-
-				// Chunk the tree creation to respect GitHub's API limits on large repositories
-				for (let i = 0; i < total; i += CHUNK_SIZE) {
-					const chunk = treeItems.slice(i, i + CHUNK_SIZE);
-
-					// Update the progress indicator with the amount of files processed vs total
-					const percent = 50 + Math.round((i / total) * 30);
-					this.emit(
-						"progress",
-						percent,
-						t("progress.cleaning_enc"),
-						`${i}/${total}`,
-					);
-
-					const treeRes = await this.api.createTree(currentTreeSha, chunk);
-
-					if (!treeRes.ok) {
-						throw new Error(`Tree creation failed: ${await treeRes.text()}`);
-					}
-
-					const treeData = await treeRes.json();
-					currentTreeSha = treeData.sha;
-				}
-
-				// Final progress update showing completion of the deletion batch
-				this.emit(
-					"progress",
-					80,
-					t("progress.finalizing"),
-					`${total}/${total}`,
+				const currentTreeSha = await this.createTreeChunked(
+					treeItems,
+					lastCommit.tree.sha,
+					t("progress.cleaning_enc"),
 				);
 
 				const commitRes = await this.api.createCommit(

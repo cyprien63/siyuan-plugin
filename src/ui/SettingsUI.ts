@@ -1,8 +1,14 @@
+/**
+ * Configuration interface manager.
+ * Renders the SiYuan settings panel, handles user inputs (credentials, preferences),
+ * and routes manual trigger actions (import/export, repository reset).
+ */
+
 import { Dialog, showMessage, Setting } from "siyuan";
-import { t, availableLocales, setLocale, getLocale } from "./i18n";
-import GitHubSyncPlugin from "./index";
-import { SyncEngine } from "./SyncEngine";
-import { GitPluginConfig } from "./types";
+import { t, availableLocales, setLocale, getLocale } from "../shared-utils/i18n";
+import GitHubSyncPlugin from "../index";
+import { SyncEngine } from "../engine/SyncEngine";
+import { GitPluginConfig, SyncError } from "../shared-utils/types";
 import { SyncProgressUI } from "./ProgressUI";
 
 export class SettingsUI {
@@ -10,6 +16,8 @@ export class SettingsUI {
 		private plugin: GitHubSyncPlugin,
 		private engine: SyncEngine,
 	) {
+		this.engine.removeAllListeners()
+
 		this.engine.on(
 			"progress",
 			(percent: number, status: string, details: string) => {
@@ -17,8 +25,9 @@ export class SettingsUI {
 			},
 		);
 
-		this.engine.on("error", (err: string) => {
-			showMessage(err, 6000, "error");
+		this.engine.on("error", (err: SyncError | string) => {
+    const msg = err instanceof SyncError ? err.message : String(err);
+    showMessage(msg, 6000, "error");
 		});
 	}
 

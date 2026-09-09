@@ -4,7 +4,7 @@
 // so that the plugin can know if a file has changed locally or remotely and needs to be synced
 
 import { Plugin } from "siyuan";
-import { SYNCED_STATE_KEY, SyncedState } from "./types";
+import { SYNCED_STATE_KEY, SyncedState } from "../shared-utils/types";
 
 export class SyncStateLedger {
 	private state: Record<string, string> = {};

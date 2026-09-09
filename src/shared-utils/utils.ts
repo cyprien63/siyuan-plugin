@@ -1,13 +1,15 @@
 /**
- * Generic helpers shared across the plugin.
- *
- * This module groups small, dependency-light utilities: base64 conversion,
- * git SHA-1 computation, error prettifying, text extraction from SiYuan files
- * and the optional AI-powered commit message generation.
+ * Generic helper library.
+ * Provides stateless utility functions for SHA-1 hashing, base64 conversions,
+ * text extraction, Groq AI commit generation, and generic error string mapping.
  */
 import { getLocale, t } from "./i18n";
-import { PLUGIN_MANIFEST_PATH, WIDGET_MANIFEST_PATH, THEME_MANIFEST_PATH, NOTEBOOK_MANIFEST_FILE, GitHubTreeItem } from "./types";
-import { GitHubAPI } from "./github-api";
+import {
+	PLUGIN_MANIFEST_PATH,
+	WIDGET_MANIFEST_PATH,
+	THEME_MANIFEST_PATH,
+	NOTEBOOK_MANIFEST_FILE,
+} from "./types";
 
 /**
  * Convert an ArrayBuffer to a base64 string.
@@ -228,34 +230,12 @@ export async function generateCommitMessage(
 // manifest handling utils
 // ------------------------------------------------------------------------
 export const MANIFEST_PATHS = new Set([
-    PLUGIN_MANIFEST_PATH,
-    WIDGET_MANIFEST_PATH,
-    THEME_MANIFEST_PATH,
-    NOTEBOOK_MANIFEST_FILE
+	PLUGIN_MANIFEST_PATH,
+	WIDGET_MANIFEST_PATH,
+	THEME_MANIFEST_PATH,
+	NOTEBOOK_MANIFEST_FILE,
 ]);
 
 export function isManifestPath(path: string): boolean {
-    return MANIFEST_PATHS.has(path);
-}
-
-export function getRemotePath(localPath: string, isEncrypted: boolean): string {
-    if (isManifestPath(localPath)) {
-        return localPath; // Do not obfuscate manifests
-    }
-    return isEncrypted ? obfuscatePath(localPath) : localPath;
-}
-
-export async function createGitTreeChunked(
-    api: GitHubAPI,
-    items: GitHubTreeItem[],
-    baseTreeSha: string
-): Promise<string> {
-    // 5xx retry logic with progressive backoff and chunking
-    const chunks = chunkArray(items, 500);
-    let currentTreeSha = baseTreeSha;
-
-    for (const chunk of chunks) {
-        currentTreeSha = await withRetry(() => api.createTree(chunk, currentTreeSha));
-    }
-    return currentTreeSha;
+	return MANIFEST_PATHS.has(path);
 }

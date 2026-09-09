@@ -1,21 +1,29 @@
+import {
+	GITHUB_API,
+	GitHubTreeItem,
+	GitHubCommit,
+	GitHubTreePayload,
+} from "../shared-utils/types";
+import { base64ToArrayBuffer, sleep } from "../shared-utils/utils";
+import { t } from "../shared-utils/i18n";
+
+export class GitHubError extends Error {
+	constructor(
+		public status: number,
+		public statusText: string,
+		public body: string,
+		public url: string,
+	) {
+		super(`[GitHub API] ${status} ${statusText} on ${url}`);
+		this.name = "GitHubError";
+	}
+}
+
 /**
- * Thin REST client for the GitHub git-object API.
- *
- * This class talks directly to the low-level GitHub endpoints needed to build
- * a commit without a local git binary:
- *   - blobs  (file content)
- *   - trees  (directory snapshots)
- *   - commits (tree + message + parents)
- *   - refs   (branch pointers)
- *
- * It also automatically handles GitHub's primary and secondary rate limits by
- * backing off and retrying based on the returned headers.
+ * GitHub REST API client.
+ * Provides rate-limit-aware fetch wrappers for interacting with git objects
+ * (trees, blobs, commits, refs) and surfaces HTTP errors for centralized handling.
  */
-
-import { GITHUB_API, GitHubTreeItem, GitHubCommit, GitHubTreePayload } from "./types";
-import { base64ToArrayBuffer, sleep } from "./utils";
-import { t } from "./i18n";
-
 export class GitHubAPI {
 	/**
 	 * @param token    GitHub Personal Access Token (must include the `repo` scope).
@@ -97,10 +105,15 @@ export class GitHubAPI {
 			}
 
 			if (!res.ok) {
+				const errorBody = await res.text();
 				console.error(
-					`[GitHub Sync] API Error: ${res.status} ${res.statusText} on ${path}`,
+					`[GitHub Sync] VERBOSE API ERROR:\n` +
+						`  URL: ${method} ${url}\n` +
+						`  Status: ${res.status} ${res.statusText}\n` +
+						`  Headers: ${res.headers}\n` +
+						`  Body: ${errorBody}`,
 				);
-				return res;
+				throw new GitHubError(res.status, res.statusText, errorBody, url);
 			}
 
 			return res;

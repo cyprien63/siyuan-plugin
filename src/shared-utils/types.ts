@@ -1,9 +1,7 @@
 /**
- * Shared constants and TypeScript types for the GitHub Sync plugin.
- *
- * This module is the single source of truth for the paths, keys and shapes
- * used across the whole plugin. It has no runtime dependencies, so it is
- * safe to import from anywhere (API wrappers, UI, crypto, etc.).
+ * Global type definitions and constants.
+ * Acts as the single source of truth for plugin interfaces, data structures,
+ * and static configuration values (e.g., sync paths, byte limits).
  */
 
 /**
@@ -276,6 +274,13 @@ export interface SyncedState {
 	files: Record<string, string>;
 }
 
+// simple result interface
+export interface SyncResult {
+    status: "success" | "error";
+    message: string;
+}
+
+
 /**
  * Result of the 3-way merge computed before a push (`mergeBeforePush`).
  * Each list holds files grouped by the action the push should take.
@@ -287,4 +292,16 @@ export interface MergePlan {
 	toPull: { githubPath: string; siYuanPath: string }[];
 	conflicted: { githubPath: string; siYuanPath: string }[];
 	skippedLarge: number;
+}
+
+// sync error centralized class
+export class SyncError extends Error {
+    constructor(
+        public status: number,
+        public message: string,
+        public originalError?: unknown
+    ) {
+        super(message);
+        this.name = "SyncError";
+    }
 }

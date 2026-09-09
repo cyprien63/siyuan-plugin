@@ -496,7 +496,9 @@ const locales: Record<string, LocaleMap> = {
 		zh: "正在验证旧密码...",
 	},
 	"progress.cleanup": {
-		en: "Cleaning up..."
+		fr: "Nettoyage en cours...",
+		en: "Cleaning up...",
+		zh: "正在清理...",
 	},
 	"progress.cleaning_local": {
 		fr: "Suppression des fichiers locaux obsolètes...",
@@ -504,131 +506,141 @@ const locales: Record<string, LocaleMap> = {
 		zh: "正在删除过期的本地文件……",
 	},
 	"progress.pull_calculation": {
+		fr: "Calcul du plan de pull...",
 		en: "Calculating pull plan...",
+		zh: "正在计算拉取计划...",
 	},
 	"progress.restore_environment": {
+		fr: "Restauration de l'environnement",
 		en: "Restoring environment",
+		zh: "正在恢复环境",
 	},
 	"progress.process_manifests": {
+		fr: "Traitement des manifestes...",
 		en: "Processing manifests...",
+		zh: "正在处理清单文件...",
 	},
 	"progress.update_state": {
+		fr: "Mise à jour de l'état...",
 		en: "Updating state...",
+		zh: "正在更新状态...",
 	},
 	"progress.checking_remote_files": {
+		fr: "Vérification des fichiers distants :",
 		en: "Checking remote files:",
+		zh: "正在检查远程文件：",
 	},
 
 	"setting.actions": {
-	  fr: "Actions",
-	  en: "Actions",
-	  zh: "操作",
+		fr: "Actions",
+		en: "Actions",
+		zh: "操作",
 	},
 	"setting.encryption_password": {
-	  fr: "Mot de passe de chiffrement",
-	  en: "Encryption password",
-	  zh: "加密密码",
+		fr: "Mot de passe de chiffrement",
+		en: "Encryption password",
+		zh: "加密密码",
 	},
 	"setting.encryption_salt": {
-	  fr: "Sel de chiffrement",
-	  en: "Encryption salt",
-	  zh: "加密盐值",
+		fr: "Sel de chiffrement",
+		en: "Encryption salt",
+		zh: "加密盐值",
 	},
 	"setting.github_repo": {
-	  fr: "GitHub Dépôt",
-	  en: "GitHub Repo",
-	  zh: "GitHub 仓库名",
+		fr: "GitHub Dépôt",
+		en: "GitHub Repo",
+		zh: "GitHub 仓库名",
 	},
 	"setting.github_token": {
-	  fr: "GitHub Token PAT",
-	  en: "GitHub Token PAT",
-	  zh: "GitHub Token (PAT)",
+		fr: "GitHub Token PAT",
+		en: "GitHub Token PAT",
+		zh: "GitHub Token (PAT)",
 	},
 	"setting.github_user": {
-	  fr: "GitHub Utilisateur",
-	  en: "GitHub User",
-	  zh: "GitHub 用户名",
+		fr: "GitHub Utilisateur",
+		en: "GitHub User",
+		zh: "GitHub 用户名",
 	},
 	"setting.groq_key": {
-	  fr: "Clé API Groq (optionnel)",
-	  en: "Groq API Key (optional)",
-	  zh: "Groq API Key (可选)",
+		fr: "Clé API Groq (optionnel)",
+		en: "Groq API Key (optional)",
+		zh: "Groq API Key (可选)",
 	},
 	"setting.language": {
-	  fr: "Langue (requiert un redémarrage)",
-	  en: "Language (requires restart)",
-	  zh: "语言 (需要重启)",
+		fr: "Langue (requiert un redémarrage)",
+		en: "Language (requires restart)",
+		zh: "语言 (需要重启)",
 	},
 	"setting.show_diff": {
-	  fr: "Afficher le diff avant push",
-	  en: "Show diff before push",
-	  zh: "推送前显示差异",
+		fr: "Afficher le diff avant push",
+		en: "Show diff before push",
+		zh: "推送前显示差异",
 	},
 
 	"stat.deleted": {
-	  fr: "supprimé(s)",
-	  en: "deleted",
-	  zh: "已删除",
+		fr: "supprimé(s)",
+		en: "deleted",
+		zh: "已删除",
 	},
 	"stat.pulled": {
-	  fr: "récupéré(s)",
-	  en: "pulled",
-	  zh: "已拉取",
+		fr: "récupéré(s)",
+		en: "pulled",
+		zh: "已拉取",
 	},
 	"stat.sent": {
-	  fr: "envoyé(s)",
-	  en: "sent",
-	  zh: "已发送",
+		fr: "envoyé(s)",
+		en: "sent",
+		zh: "已发送",
 	},
 	"stat.unchanged": {
-	  fr: "inchangé(s)",
-	  en: "unchanged",
-	  zh: "未修改",
+		fr: "inchangé(s)",
+		en: "unchanged",
+		zh: "未修改",
 	},
 
 	"status.error": {
-	  fr: "❌ Erreur",
-	  en: "❌ Error",
-	  zh: "❌ 错误",
+		fr: "❌ Erreur",
+		en: "❌ Error",
+		zh: "❌ 错误",
 	},
 	"status.initializing": {
-	  fr: "Initialisation...",
-	  en: "Initializing...",
-	  zh: "初始化...",
+		fr: "Initialisation...",
+		en: "Initializing...",
+		zh: "初始化...",
 	},
 	"status.ok": {
-	  fr: "✅ OK",
-	  en: "✅ OK",
-	  zh: "✅ 正常",
+		fr: "✅ OK",
+		en: "✅ OK",
+		zh: "✅ 正常",
 	},
 
 	"top.history_title": {
-	  fr: "🕒 Historique des commits",
-	  en: "🕒 Commit history",
-	  zh: "🕒 历史记录",
+		fr: "🕒 Historique des commits",
+		en: "🕒 Commit history",
+		zh: "🕒 历史记录",
 	},
 	"top.pull_title": {
-	  fr: "⬇️ Smart Pull (Incrémental)",
-	  en: "⬇️ Smart Pull (Incremental)",
-	  zh: "⬇️ 智能拉取 (增量)",
+		fr: "⬇️ Smart Pull (Incrémental)",
+		en: "⬇️ Smart Pull (Incremental)",
+		zh: "⬇️ 智能拉取 (增量)",
 	},
 	"top.push_title": {
-	  fr: "⬆️ Smart Push (Incrémental)",
-	  en: "⬆️ Smart Push (Incremental)",
-	  zh: "⬆️ 智能上传 (增量)",
+		fr: "⬆️ Smart Push (Incrémental)",
+		en: "⬆️ Smart Push (Incremental)",
+		zh: "⬆️ 智能上传 (增量)",
 	},
 
 	"ui.done": {
-	  fr: "✅ Terminé",
-	  en: "✅ Done",
-	  zh: "✅ 完成",
+		fr: "✅ Terminé",
+		en: "✅ Done",
+		zh: "✅ 完成",
 	},
 	"ui.error": {
-	  fr: "❌ Erreur",
-	  en: "❌ Error",
-	  zh: "❌ 错误",
-		},
-}
+		fr: "❌ Erreur",
+		en: "❌ Error",
+		zh: "❌ 错误",
+	},
+};
 
 /** Locale currently in use. Defaults to English. */
 let current = "en";
@@ -643,7 +655,7 @@ export function t(key: string): string {
 	// return key of selected language
 	// if it doesn't exist, return english key
 	// if it doesn't exist, return key
-	return locales[key][current] ?? locales[key]["en"] ??key;
+	return locales[key][current] ?? locales[key]["en"] ?? key;
 }
 
 /** Return the currently active locale code. */

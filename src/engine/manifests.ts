@@ -1,16 +1,7 @@
 /**
- * Manifest generation and marketplace installation.
- *
- * The plugin does not sync raw plugin/widget/theme folders (they are excluded
- * from the file walker). Instead, it pushes small generated manifests that
- * list the installed packages with their versions:
- *   - `data/plugin-manifest.json`  -> installed plugins
- *   - `data/widget-manifest.json`  -> installed widgets
- *   - `data/theme-manifest.json`   -> installed themes (+ active theme per mode)
- *   - `data/<notebookId>/notebook.json` -> per-notebook display names
- *
- * On pull, the missing packages are re-installed from the official SiYuan
- * marketplace using the `installSingle*` helpers.
+ * Marketplace and metadata orchestrator.
+ * Generates and processes lightweight JSON manifests for installed plugins, widgets,
+ * themes, and notebook names to bypass syncing volatile raw workspace folders.
  */
 import {
 	PluginManifest,
@@ -24,23 +15,11 @@ import {
 	WIDGET_MANIFEST_PATH,
 	THEME_MANIFEST_PATH,
 	PLUGIN_SELF_NAME,
-} from "./types";
-import {
-	siYuanReadDir,
-	siYuanGetFile,
-	siYuanListNotebooks,
-	siYuanGetNotebookConf,
-	siYuanOpenNotebook,
-	siYuanSetNotebookConf,
-	installSinglePlugin,
-	installSingleWidget,
-	installSingleTheme,
-	getCurrentAppearance,
-	setActiveTheme,
-} from "./siyuan-api";
-import { GitHubAPI } from "./github-api";
-import { sleep } from "./utils";
-import { t } from "./i18n";
+} from "../shared-utils/types";
+import { SiYuanAPI } from "../api/Siyuan-api";
+import { GitHubAPI } from "../api/Github-api";
+import { sleep } from "../shared-utils/utils";
+import { t } from "../shared-utils/i18n";
 
 /**
  * Read the locally installed plugins by scanning each plugin.json under `data/plugins`.
@@ -48,13 +27,13 @@ import { t } from "./i18n";
  * The plugin itself (`PLUGIN_SELF_NAME`) is always excluded so the synced
  * manifest never references the plugin that is doing the syncing.
  */
-export async function collectInstalledPlugins(): Promise<PluginManifest> {
-	const entries = await siYuanReadDir(`${SYNC_ROOT}/plugins`);
+export async function collectInstalledPlugins(siyuan: SiYuanAPI): Promise<PluginManifest> {
+	const entries = await siyuan.readDir(`${SYNC_ROOT}/plugins`);
 	const plugins: PluginManifestEntry[] = [];
 	for (const e of entries) {
 		if (!e.isDir || e.name === PLUGIN_SELF_NAME) continue;
 		try {
-			const raw = await siYuanGetFile(
+			const raw = await siyuan.getFile(
 				`${SYNC_ROOT}/plugins/${e.name}/plugin.json`,
 			);
 			if (!raw) continue;
@@ -71,8 +50,8 @@ export async function collectInstalledPlugins(): Promise<PluginManifest> {
 }
 
 /** Build the plugin manifest file ready to be uploaded. */
-export async function generatePluginManifest(): Promise<ManifestFile> {
-	const manifest = await collectInstalledPlugins();
+export async function generatePluginManifest(siyuan: SiYuanAPI): Promise<ManifestFile> {
+	const manifest = await collectInstalledPlugins(siyuan);
 	const json = JSON.stringify(manifest, null, 2);
 	const content = new TextEncoder().encode(json).buffer;
 	return { githubPath: PLUGIN_MANIFEST_PATH, content };
@@ -84,10 +63,11 @@ export async function generatePluginManifest(): Promise<ManifestFile> {
  * @returns The number of plugins actually installed.
  */
 export async function installMissingPlugins(
+	siyuan: SiYuanAPI,
 	remoteManifest: PluginManifest,
 	onProgress?: (pct: number, status: string, details: string) => void,
 ): Promise<number> {
-	const local = await collectInstalledPlugins();
+	const local = await collectInstalledPlugins(siyuan);
 	const localMap = new Map(local.plugins.map((p) => [p.name, p.version]));
 	const toInstall = remoteManifest.plugins.filter(
 		(p) => p.name !== PLUGIN_SELF_NAME && !localMap.has(p.name),
@@ -102,7 +82,7 @@ export async function installMissingPlugins(
 				`${t("install.plugin_prefix")} ${i + 1}/${toInstall.length}`,
 				p.name,
 			);
-		const ok = await installSinglePlugin(p.name);
+		const ok = await siyuan.installPlugin(p.name);
 		if (ok) installed++;
 		await sleep(200);
 	}
@@ -110,13 +90,13 @@ export async function installMissingPlugins(
 }
 
 /** Read the locally installed widgets by scanning each widget.json under `data/widgets`. */
-export async function collectInstalledWidgets(): Promise<PluginManifest> {
-	const entries = await siYuanReadDir(`${SYNC_ROOT}/widgets`);
+export async function collectInstalledWidgets(siyuan: SiYuanAPI): Promise<PluginManifest> {
+	const entries = await siyuan.readDir(`${SYNC_ROOT}/widgets`);
 	const plugins: PluginManifestEntry[] = [];
 	for (const e of entries) {
 		if (!e.isDir) continue;
 		try {
-			const raw = await siYuanGetFile(
+			const raw = await siyuan.getFile(
 				`${SYNC_ROOT}/widgets/${e.name}/widget.json`,
 			);
 			if (!raw) continue;
@@ -133,8 +113,8 @@ export async function collectInstalledWidgets(): Promise<PluginManifest> {
 }
 
 /** Build the widget manifest file ready to be uploaded. */
-export async function generateWidgetManifest(): Promise<ManifestFile> {
-	const manifest = await collectInstalledWidgets();
+export async function generateWidgetManifest(siyuan: SiYuanAPI): Promise<ManifestFile> {
+	const manifest = await collectInstalledWidgets(siyuan);
 	const json = JSON.stringify(manifest, null, 2);
 	const content = new TextEncoder().encode(json).buffer;
 	return { githubPath: WIDGET_MANIFEST_PATH, content };
@@ -146,10 +126,11 @@ export async function generateWidgetManifest(): Promise<ManifestFile> {
  * @returns The number of widgets actually installed.
  */
 export async function installMissingWidgets(
+	siyuan: SiYuanAPI,
 	remoteManifest: PluginManifest,
 	onProgress?: (pct: number, status: string, details: string) => void,
 ): Promise<number> {
-	const local = await collectInstalledWidgets();
+	const local = await collectInstalledWidgets(siyuan);
 	const localMap = new Map(local.plugins.map((p) => [p.name, p.version]));
 	const toInstall = remoteManifest.plugins.filter((p) => !localMap.has(p.name));
 	if (toInstall.length === 0) return 0;
@@ -162,7 +143,7 @@ export async function installMissingWidgets(
 				`${t("install.widget_prefix")} ${i + 1}/${toInstall.length}`,
 				p.name,
 			);
-		const ok = await installSingleWidget(p.name);
+		const ok = await siyuan.installWidget(p.name);
 		if (ok) installed++;
 		await sleep(200);
 	}
@@ -176,15 +157,16 @@ export async function installMissingWidgets(
  * also appended, so they can be re-applied on another device after a pull.
  */
 export async function collectInstalledThemes(
+	siyuan: SiYuanAPI,
 	includeActive = false,
 ): Promise<PluginManifest> {
 	const THEMES_DIR = "conf/appearance/themes";
-	const entries = await siYuanReadDir(THEMES_DIR);
+	const entries = await siyuan.readDir(THEMES_DIR);
 	const plugins: PluginManifestEntry[] = [];
 	for (const e of entries) {
 		if (!e.isDir) continue;
 		try {
-			const raw = await siYuanGetFile(`${THEMES_DIR}/${e.name}/theme.json`);
+			const raw = await siyuan.getFile(`${THEMES_DIR}/${e.name}/theme.json`);
 			if (!raw) continue;
 			const text = new TextDecoder().decode(raw);
 			const json = JSON.parse(text);
@@ -197,7 +179,7 @@ export async function collectInstalledThemes(
 	}
 	const result: PluginManifest = { plugins };
 	if (includeActive) {
-		const appearance = await getCurrentAppearance();
+		const appearance = await siyuan.getCurrentAppearance();
 		if (appearance) {
 			result.themeLight = appearance.themeLight;
 			result.themeDark = appearance.themeDark;
@@ -207,8 +189,8 @@ export async function collectInstalledThemes(
 }
 
 /** Build the theme manifest file ready to be uploaded. */
-export async function generateThemeManifest(): Promise<ManifestFile> {
-	const manifest = await collectInstalledThemes(true);
+export async function generateThemeManifest(siyuan: SiYuanAPI): Promise<ManifestFile> {
+	const manifest = await collectInstalledThemes(siyuan, true);
 	const json = JSON.stringify(manifest, null, 2);
 	const content = new TextEncoder().encode(json).buffer;
 	return { githubPath: THEME_MANIFEST_PATH, content };
@@ -221,10 +203,11 @@ export async function generateThemeManifest(): Promise<ManifestFile> {
  * @returns The number of themes actually installed.
  */
 export async function installMissingThemes(
+	siyuan: SiYuanAPI,
 	remoteManifest: PluginManifest,
 	onProgress?: (pct: number, status: string, details: string) => void,
 ): Promise<number> {
-	const local = await collectInstalledThemes();
+	const local = await collectInstalledThemes(siyuan);
 	const localMap = new Map(
 		local.plugins.map((p: PluginManifestEntry) => [p.name, p.version]),
 	);
@@ -233,7 +216,7 @@ export async function installMissingThemes(
 			(p: PluginManifestEntry) => !localMap.has(p.name),
 		) ?? [];
 	if (toInstall.length === 0) return 0;
-	const appearance = await getCurrentAppearance();
+	const appearance = await siyuan.getCurrentAppearance();
 	const currentMode = appearance?.mode ?? 0;
 	let installed = 0;
 	for (let i = 0; i < toInstall.length; i++) {
@@ -244,19 +227,19 @@ export async function installMissingThemes(
 				`${t("install.theme_prefix")} ${i + 1}/${toInstall.length}`,
 				p.name,
 			);
-		const ok = await installSingleTheme(p.name, currentMode);
+		const ok = await siyuan.installTheme(p.name, currentMode);
 		if (ok) installed++;
 		await sleep(200);
 	}
 	// Re-apply the theme that was active on the source device, so the look of
 	// the workspace is preserved across devices.
 	if (installed > 0) {
-		const restored = await getCurrentAppearance();
+		const restored = await siyuan.getCurrentAppearance();
 		const currentMode = restored?.mode ?? 0;
 		if (currentMode === 0 && remoteManifest.themeLight) {
-			await setActiveTheme(remoteManifest.themeLight, 0);
+			await siyuan.setActiveTheme(remoteManifest.themeLight, 0);
 		} else if (currentMode === 1 && remoteManifest.themeDark) {
-			await setActiveTheme(remoteManifest.themeDark, 1);
+			await siyuan.setActiveTheme(remoteManifest.themeDark, 1);
 		}
 	}
 	return installed;
@@ -268,13 +251,13 @@ export async function installMissingThemes(
  * The name is read from the notebook configuration, falling back to the raw
  * notebook entry name when the config does not expose one.
  */
-export async function collectNotebookManifests(): Promise<
+export async function collectNotebookManifests(siyuan: SiYuanAPI): Promise<
 	NotebookManifestEntry[]
 > {
-	const notebooks = await siYuanListNotebooks();
+	const notebooks = await siyuan.listNotebooks();
 	const entries: NotebookManifestEntry[] = [];
 	for (const nb of notebooks) {
-		const conf = await siYuanGetNotebookConf(nb.id);
+		const conf = await siyuan.getNotebookConf(nb.id);
 		const name = conf?.conf?.name || conf?.name || nb.name;
 		if (name) entries.push({ id: nb.id, name });
 	}
@@ -287,8 +270,8 @@ export async function collectNotebookManifests(): Promise<
  * These tiny files store the display names so a pull can restore readable
  * notebook titles (which are otherwise obfuscated along with the paths).
  */
-export async function generateNotebookManifests(): Promise<ManifestFile[]> {
-	const notebooks = await collectNotebookManifests();
+export async function generateNotebookManifests(siyuan: SiYuanAPI): Promise<ManifestFile[]> {
+	const notebooks = await collectNotebookManifests(siyuan);
 	return notebooks.map((nb) => {
 		const json = JSON.stringify({ id: nb.id, name: nb.name }, null, 2);
 		const content = new TextEncoder().encode(json).buffer;
@@ -309,6 +292,7 @@ export async function generateNotebookManifests(): Promise<ManifestFile[]> {
  * @returns The number of notebooks whose name was restored.
  */
 export async function processNotebookManifests(
+	siyuan: SiYuanAPI,
 	remoteItems: GitHubTreeItem[],
 	github: GitHubAPI,
 	decryptFn: (buf: ArrayBuffer) => Promise<ArrayBuffer>,
@@ -344,11 +328,11 @@ export async function processNotebookManifests(
 			const manifest: NotebookManifestEntry = JSON.parse(manifestText);
 			if (!manifest.name) continue;
 
-			await siYuanOpenNotebook(notebookId);
-			const confData = await siYuanGetNotebookConf(notebookId);
+			await siyuan.openNotebook(notebookId);
+			const confData = await siyuan.getNotebookConf(notebookId);
 			if (confData?.conf) {
 				confData.conf.name = manifest.name;
-				await siYuanSetNotebookConf(notebookId, confData.conf);
+				await siyuan.setNotebookConf(notebookId, confData.conf);
 			}
 			processed++;
 			await sleep(50);
