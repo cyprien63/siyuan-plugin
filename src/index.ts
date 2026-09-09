@@ -18,7 +18,12 @@ import { SettingsUI } from "./ui/SettingsUI";
 import { StatusBarUI } from "./ui/statusBarUI";
 
 import { t, setLocale, getLocale } from "./shared-utils/i18n";
-import { STORAGE_KEY, DEFAULT_CONFIG, GitPluginConfig, SyncError } from "./shared-utils/types";
+import {
+	STORAGE_KEY,
+	DEFAULT_CONFIG,
+	GitPluginConfig,
+	SyncError,
+} from "./shared-utils/types";
 import { friendlyError } from "./shared-utils/utils";
 
 export default class GitHubSyncPlugin extends Plugin {
@@ -29,8 +34,6 @@ export default class GitHubSyncPlugin extends Plugin {
 	public config: GitPluginConfig = { ...DEFAULT_CONFIG };
 
 	async onload() {
-		this.addIcons(`<symbol id="iconGitHubUpload"...></symbol>`); // (Keep your existing SVG injection)
-
 		const saved = await this.loadData(STORAGE_KEY);
 		if (saved) {
 			this.config = { ...DEFAULT_CONFIG, ...saved };
