@@ -1177,6 +1177,9 @@ export class SyncEngine extends EventEmitter {
 			// Clear the local state ledger and map it to the new empty commit
 			await this.ledger.save(commitData.sha);
 
+			// Emit 100% progress to close the SyncProgressUI dialog
+			this.emit("progress", 100, t("ui.done"), t("msg.repo_cleared"));
+
 			// fire message about repo being cleared
 			showMessage(t("msg.repo_cleared"), 8000);
 		} catch (e) {
