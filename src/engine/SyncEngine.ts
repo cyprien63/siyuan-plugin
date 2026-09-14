@@ -1060,7 +1060,6 @@ export class SyncEngine extends EventEmitter {
 			// fire the reset operation and handle errors
 			try {
 				await this.resetRepo();
-				showMessage(t("msg.encryption_removed"), 8000);
 				dialog.destroy();
 			} catch (e) {
 				const error = this.formatApiError(e);
@@ -1117,49 +1116,69 @@ export class SyncEngine extends EventEmitter {
 
 			const treeItems: GitHubTreeItem[] = [];
 
-			// remove all files from repo
-			for (const item of remoteTree) {
-				if (!item.path.includes("/")) {
-					treeItems.push({
-						path: item.path,
-						mode: item.mode,
-						type: item.type,
-						sha: null as unknown as string,
-					});
-				}
+			// 1. Preserve the .github directory to prevent workflow scope blocks
+			const githubDir = remoteTree.find((i) => i.path === ".github");
+			if (githubDir) {
+				treeItems.push({
+					path: ".github",
+					mode: githubDir.mode,
+					type: githubDir.type,
+					sha: githubDir.sha,
+				});
 			}
-			const total = treeItems.length;
 
-			if (total > 0) {
-				const currentTreeSha = await this.createTreeChunked(
-					treeItems,
-					lastCommit.tree.sha,
-					t("progress.cleaning_enc"),
-				);
+			// 2. Create a placeholder file so the new tree is never empty
+			const blobRes = await this.api.createBlob(
+				btoa("Repository reset by siyuan-github-sync."),
+			);
+			if (!blobRes.ok) throw new Error("Failed to create init blob");
+			const blobData = await blobRes.json();
 
-				const commitRes = await this.api.createCommit(
-					"chore: reset repository (delete all files)",
-					currentTreeSha,
-					[lastCommitSha],
-				);
+			treeItems.push({
+				path: "_siyuan-github-sync-init",
+				mode: "100644",
+				type: "blob",
+				sha: blobData.sha,
+			});
 
-				if (!commitRes.ok) {
-					throw new Error(`Commit failed: ${await commitRes.text()}`);
-				}
+			this.emit(
+				"progress",
+				50,
+				t("progress.removing_encryption"),
+				t("progress.creating_tree"),
+			);
 
-				const commitData = await commitRes.json();
-				const updateRes = await this.api.updateRef(branch, commitData.sha);
+			// 3. Create a brand new root tree (Passing "" skips base_tree injection)
+			const treeRes = await this.api.createTree("", treeItems);
 
-				if (!updateRes.ok) {
-					throw new Error(`Ref update failed: ${await updateRes.text()}`);
-				}
-
-				// Clear the local state ledger and map it to the new empty commit
-				await this.ledger.save(commitData.sha);
-
-				// fire message about repo being cleared
-				showMessage(t("msg.repo_cleared"), 8000);
+			if (!treeRes.ok) {
+				throw new Error(`Tree creation failed: ${await treeRes.text()}`);
 			}
+			const treeData = await treeRes.json();
+
+			// 4. Commit the new clean tree
+			const commitRes = await this.api.createCommit(
+				"chore: reset repository (delete all files)",
+				treeData.sha,
+				[lastCommitSha],
+			);
+
+			if (!commitRes.ok) {
+				throw new Error(`Commit failed: ${await commitRes.text()}`);
+			}
+
+			const commitData = await commitRes.json();
+			const updateRes = await this.api.updateRef(branch, commitData.sha);
+
+			if (!updateRes.ok) {
+				throw new Error(`Ref update failed: ${await updateRes.text()}`);
+			}
+
+			// Clear the local state ledger and map it to the new empty commit
+			await this.ledger.save(commitData.sha);
+
+			// fire message about repo being cleared
+			showMessage(t("msg.repo_cleared"), 8000);
 		} catch (e) {
 			throw this.formatApiError(e);
 		} finally {

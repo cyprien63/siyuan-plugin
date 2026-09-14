@@ -308,20 +308,17 @@ export class SettingsUI {
 				btn.disabled = true;
 				// define warning dialog in UI
 				const dialog = new Dialog({
-					title: t("dialog.remove_encryption_title"),
+					title: t("dialog.reset_repo_title"),
 					content: `
             <div class="b3-dialog__content" style="padding:16px;">
-                <div style="margin-bottom:12px;line-height:1.7;white-space:pre-wrap;">${t("dialog.remove_encryption_body")}</div>
-                <div style="margin-top:16px;padding:12px;background:var(--b3-theme-error-background, rgba(234, 76, 137, 0.1));color:var(--b3-theme-error, #ea4c89);border-radius:4px;font-weight:bold;">
-                    ${t("dialog.remove_encryption_warning")}
-                </div>
+                <div style="margin-bottom:12px;line-height:1.7;white-space:pre-wrap;">${t("dialog.reset_repo_warning")}</div>
             </div>
             <div class="b3-dialog__action" style="padding:8px 16px;border-top:1px solid var(--b3-border-color);">
                 <button id="remove-encryption-confirm" class="b3-button b3-button--outline b3-button--error">${t("button.confirm")}</button>
                 <button id="remove-encryption-cancel" class="b3-button b3-button--outline" style="margin-left:8px;">${t("button.close")}</button>
             </div>
         `,
-					width: window.innerWidth < 600 ? `${window.innerWidth - 32}px` : "540px",
+					width: window.innerWidth < 600 ? `${window.innerWidth - 32}px` : "700px",
 				});
 				this.engine.resetRepoDialog(dialog);
 				btn.disabled = false;

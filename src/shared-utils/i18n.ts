@@ -80,34 +80,15 @@ const locales: Record<string, LocaleMap> = {
 		zh: "🧪 测试连接",
 	},
 
-	"dialog.remove_encryption_body": {
-		fr: `Le dépôt distant va être ré-uploadé SANS chiffrement :
-	• tout le contenu sera ré-uploadé en clair (les NOMS des carnets seront aussi restaurés)
-	• tous les anciens fichiers chiffrés seront supprimés du dépôt pour que personne ne puisse les récupérer.
-Confirmez pour continuer`,
-		en: `The remote repository will be re-pushed WITHOUT encryption:
-	• all content will be re-uploaded in cleartext (notebook NAMES will be restored too)
-	• every old encrypted file will be deleted from the remote so nobody can recover it.
-Confirm to continue`,
-		zh: `远程仓库将被重新推送且不使用加密：
-	• 所有内容将以明文形式重新上传（笔记本名称也将恢复
-	• 每一个旧的加密文件都将从远程仓库删除，以确保无人可以恢复
-确认以继续`,
-	},
-	"dialog.remove_encryption_title": {
-		fr: "🔓 Supprimer le chiffrement",
-		en: "🔓 Remove encryption",
-		zh: "🔓 移除加密",
-	},
-	"dialog.remove_encryption_warning": {
+	"dialog.reset_repo_warning": {
 		fr: `Si vous devez modifier ou supprimer votre mot de passe, vous devez réinitialiser votre dépôt.
-	• Cette opération supprimera tous les fichiers du dépôt.
+	- Cette opération supprimera tous les fichiers du dépôt.
 Confirmer pour continuer`,
 		en: `If you need to change or remove your password, you need to reset your repository.
-		• With this operation, all files in the repository will be deleted and it will be necessary to be pushed again with the newly desired configuration.
+	- With this operation, all files in the repository will be deleted and it will be necessary to be pushed again with the newly desired configuration.
 Confirm to continue`,
 		zh: `如果您需要更改或删除密码，则需要重置您的存储库
-	• 此操作将删除存储库中的所有文件，您需要使用新的配置重新推送存储库。
+	- 此操作将删除存储库中的所有文件，您需要使用新的配置重新推送存储库。
 确认继续`,
 	},
 	"dialog.reset_repo_title": {
@@ -292,11 +273,6 @@ Confirm to continue`,
 		en: "conflict(s) unresolved (modified on both sides)",
 		zh: "个冲突未解决（双向修改）",
 	},
-	"msg.encryption_removed": {
-		fr: "✅ Chiffrement supprimé : le dépôt a été ré-uploadé en clair.",
-		en: "✅ Encryption removed: the repository has been re-uploaded in cleartext.",
-		zh: "✅ 已移除加密：远程仓库已重新以明文上传。",
-	},
 	"msg.errors": {
 		fr: "⚠️ {n} erreur(s): Ouvrez les outils de développement pour afficher les détails (ctrl+shift+i).",
 		en: "⚠️ {n} error(s): Open dev tools to see details (ctrl+shift+i).",
@@ -368,12 +344,15 @@ Confirm to continue`,
 		zh: "初始推送完成，共发送 {n} 个文件。",
 	},
 	"msg.repo_cleared": {
-		fr: "undefined",
+		fr: `✅ Dépôt vidé avec succès.
+Vous pouvez désormais pousser à nouveau votre espace de travail.
+Modifiez ou supprimez le mot de passe selon vos besoins avant d'effectuer le push.`,
 		en: `✅ Repository successfully emptied.\n
-			You can now push your workplace anew.
-
-			Change or remove password as desired before pushing.`,
-		zh: "undefined",
+You can now push your workplace anew.
+Change or remove password as desired before pushing.`,
+		zh: `✅ 仓库已成功清空。
+您现在可以重新推送您的工作内容。
+推送前，您可以根据需要更改或移除密码。`,
 	},
 	"msg.repo_empty": {
 		fr: "Le dépôt est vide. Faites un Push d'abord.",
@@ -483,11 +462,6 @@ Confirm to continue`,
 		fr: "Upload manifeste widgets...",
 		en: "Upload widget manifest...",
 		zh: "上传挂件清单...",
-	},
-	"progress.uploading_plaintext": {
-		fr: "Ré-upload en clair ({n})...",
-		en: "Re-uploading in cleartext ({n})...",
-		zh: "正在以明文重新上传 ({n})...",
 	},
 	"progress.verifying_password": {
 		fr: "Vérification de l'ancien mot de passe...",
