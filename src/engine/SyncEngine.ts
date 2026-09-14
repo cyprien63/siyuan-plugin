@@ -554,7 +554,7 @@ export class SyncEngine extends EventEmitter {
 			const chunk = items.slice(i, i + CHUNK_SIZE);
 
 			// Progress formatting for UI
-			const percent = 50 + Math.round((i / total) * 30);
+			const percent = 80 + Math.round((i / total) * 30);
 			this.emit("progress", percent, progressLabel, `${i}/${total}`);
 
 			const treeRes = await this.api.createTree(currentTreeSha, chunk);
@@ -566,7 +566,7 @@ export class SyncEngine extends EventEmitter {
 			currentTreeSha = treeData.sha;
 		}
 
-		this.emit("progress", 85, t("progress.finalizing"), `${total}/${total}`);
+		this.emit("progress", 95, t("progress.finalizing"), `${total}/${total}`);
 		return currentTreeSha;
 	}
 
@@ -698,7 +698,8 @@ export class SyncEngine extends EventEmitter {
 						siPath.includes("/temp/") ||
 						SKIP_PATH_FRAGMENTS.some((f) => siPath.includes(f)) ||
 						siPath.endsWith(".siyuan.sy") ||
-						isManifestPath(originalPath)
+						isManifestPath(originalPath) ||
+						originalPath.endsWith(`/${NOTEBOOK_MANIFEST_FILE}`)
 					) {
 						processed++;
 						return;
@@ -734,7 +735,6 @@ export class SyncEngine extends EventEmitter {
 	}
 
 	// download + write operations
-	// download + write operations
 	private async downloadAndWriteFiles(
 		toPull: { item: GitHubTreeItem; siPath: string; originalPath: string }[],
 	): Promise<boolean> {
@@ -764,7 +764,9 @@ export class SyncEngine extends EventEmitter {
 							const writeSuccess = await this.siyuan.putFile(siPath, decrypted);
 
 							if (writeSuccess) {
-								console.debug(`[GitHub Sync] Wrote pulled file to workspace: ${siPath}`);
+								console.debug(
+									`[GitHub Sync] Wrote pulled file to workspace: ${siPath}`,
+								);
 								const ptSha = await calculateGitSha(decrypted);
 								this.ledger.updateFile(originalPath, ptSha, item.sha);
 								stateUpdated = true;
@@ -894,7 +896,10 @@ export class SyncEngine extends EventEmitter {
 			console.debug(
 				`[GitHub Sync] Refreshing filetree and scheduling reload...`,
 			);
+
 			await this.siyuan.refreshFiletree();
+			await this.siyuan.rebuildDataIndex();
+
 			setTimeout(() => window.location.reload(), 1500); // Reload SiYuan to rebuild indexes
 		} else {
 			console.debug(`[GitHub Sync] No changes required, skipping reload.`);
@@ -1111,12 +1116,11 @@ export class SyncEngine extends EventEmitter {
 
 			// remove all files from repo
 			for (const item of remoteTree) {
-				if (item.type === "blob") {
+				if (!item.path.includes("/")) {
 					treeItems.push({
 						path: item.path,
-						mode: "100644",
-						type: "blob",
-						// GitHub's API requires sha to be explicitly null to mark a file for deletion
+						mode: item.mode,
+						type: item.type,
 						sha: null as unknown as string,
 					});
 				}

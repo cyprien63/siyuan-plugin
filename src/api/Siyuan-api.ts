@@ -55,7 +55,6 @@ export class SiYuanAPI {
 			const fd = new FormData();
 			fd.append("path", path);
 			fd.append("isDir", "false");
-			fd.append("modTime", Date.now().toString()); // Forces SiYuan to index the file
 
 			const fileName = path.split("/").pop() || "file.sy";
 			// Construct a proper File object for the SiYuan backend
@@ -372,5 +371,19 @@ export class SiYuanAPI {
 			}
 		}
 		return files;
+	}
+
+	/** Force SiYuan to rebuild its internal SQL database index. */
+	public async rebuildDataIndex(): Promise<boolean> {
+		try {
+			const res = await fetch("/api/system/rebuildDataIndex", {
+				method: "POST",
+				body: "{}",
+			});
+			const json = await res.json();
+			return json.code === 0;
+		} catch {
+			return false;
+		}
 	}
 }
