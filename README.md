@@ -9,17 +9,13 @@ Sync your SiYuan notes with a private GitHub repository via the GitHub REST API.
 - **Incremental Pull** — Retrieves modified remote files
 - **Automatic Merge** — 3-way merge before push (local / remote / last known state)
 - **Conflict Management** — Local priority in case of conflict
+- **Diff before push** — Displays files added/modified/deleted before pushing
 
 ### Plugin and Widget Synchronization
 - **Plugin Sync** — A manifest (`plugin-manifest.json`) is pushed with data containing a list of all installed plugins (name + version)
 - **Widget Sync** — A manifest (`widget-manifest.json`) is pushed with data containing all installed widgets
 - **Automatic Installation** — On pull, missing plugins/widgets are automatically installed from the official SiYuan marketplace
 - **Plugin Sync Exclusion** — `siyuan-github-sync` Never included in manifests nor installed/removed
-
-### History and Restore
-- **History** — Views the last 30 commits
-- **Restore** — Restores a commit from the history
-- **Diff before push** — Displays files added/modified/deleted before pushing
 
 ### Other
 - **Secure** — Stores tokens locally via `saveData()`
