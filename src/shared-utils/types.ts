@@ -1,9 +1,7 @@
 /**
- * Shared constants and TypeScript types for the GitHub Sync plugin.
- *
- * This module is the single source of truth for the paths, keys and shapes
- * used across the whole plugin. It has no runtime dependencies, so it is
- * safe to import from anywhere (API wrappers, UI, crypto, etc.).
+ * Global type definitions and constants.
+ * Acts as the single source of truth for plugin interfaces, data structures,
+ * and static configuration values (e.g., sync paths, byte limits).
  */
 
 /**
@@ -26,6 +24,7 @@ export const SYNC_ROOT = "data";
  * skipped during a push because GitHub blobs / SiYuan transfers get too heavy.
  */
 export const MAX_FILE_BYTES = 25_000_000;
+export const CHUNK_SIZE = 200;
 
 /**
  * Top-level workspace directories that are NEVER synced. They contain local
@@ -92,7 +91,7 @@ export const PLUGIN_SELF_NAME = "siyuan-github-sync";
  * through SiYuan's `saveData()` API, which keeps them in the workspace's data
  * store rather than in the code repository.
  */
-export interface GitHubConfig {
+export interface GitPluginConfig {
 	/** GitHub account / organisation that owns the repository. */
 	username: string;
 	/** Name of the GitHub repository to sync with. */
@@ -112,7 +111,7 @@ export interface GitHubConfig {
 }
 
 /** Sensible defaults applied when no saved configuration exists yet. */
-export const DEFAULT_CONFIG: GitHubConfig = {
+export const DEFAULT_CONFIG: GitPluginConfig = {
 	username: "",
 	repo: "",
 	token: "",
@@ -156,6 +155,17 @@ export interface GitHubCommit {
 		message: string;
 	};
 	html_url: string;
+}
+
+export interface GitHubRef {
+  ref: string;
+  node_id: string;
+  url: string;
+  object: {
+    type: string;
+    sha: string;
+    url: string;
+  };
 }
 
 // --------------------------------------------
@@ -275,6 +285,13 @@ export interface SyncedState {
 	files: Record<string, string>;
 }
 
+// simple result interface
+export interface SyncResult {
+    status: "success" | "error";
+    message: string;
+}
+
+
 /**
  * Result of the 3-way merge computed before a push (`mergeBeforePush`).
  * Each list holds files grouped by the action the push should take.
@@ -286,4 +303,16 @@ export interface MergePlan {
 	toPull: { githubPath: string; siYuanPath: string }[];
 	conflicted: { githubPath: string; siYuanPath: string }[];
 	skippedLarge: number;
+}
+
+// sync error centralized class
+export class SyncError extends Error {
+    constructor(
+        public status: number,
+        public message: string,
+        public originalError?: unknown
+    ) {
+        super(message);
+        this.name = "SyncError";
+    }
 }

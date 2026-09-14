@@ -6,8 +6,8 @@
  * "Restore" button that calls back into the plugin to restore that commit.
  */
 import { Dialog, showMessage } from "siyuan";
-import { GitHubCommit } from "./types";
-import { t } from "./i18n";
+import { GitHubCommit } from "../shared-utils/types";
+import { t } from "../shared-utils/i18n";
 
 export class HistoryDialog {
 	private dialog: Dialog;

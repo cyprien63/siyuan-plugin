@@ -1,11 +1,15 @@
 /**
- * Generic helpers shared across the plugin.
- *
- * This module groups small, dependency-light utilities: base64 conversion,
- * git SHA-1 computation, error prettifying, text extraction from SiYuan files
- * and the optional AI-powered commit message generation.
+ * Generic helper library.
+ * Provides stateless utility functions for SHA-1 hashing, base64 conversions,
+ * text extraction, Groq AI commit generation, and generic error string mapping.
  */
 import { getLocale, t } from "./i18n";
+import {
+	PLUGIN_MANIFEST_PATH,
+	WIDGET_MANIFEST_PATH,
+	THEME_MANIFEST_PATH,
+	NOTEBOOK_MANIFEST_FILE,
+} from "./types";
 
 /**
  * Convert an ArrayBuffer to a base64 string.
@@ -52,6 +56,42 @@ export async function calculateGitSha(content: ArrayBuffer): Promise<string> {
 	return Array.from(new Uint8Array(hashBuffer))
 		.map((b) => b.toString(16).padStart(2, "0"))
 		.join("");
+}
+
+/**
+ * Evaluates a relative path against an array of skip rules.
+ * Supports explicit inclusion using the '!' prefix.
+ */
+export function shouldSkipPath(
+	relativePath: string,
+	skipRules: string[],
+): boolean {
+	const normalizedPath = relativePath.replace(/^\//, "");
+
+	const includes = skipRules
+		.filter((d) => d.startsWith("!"))
+		.map((d) => d.slice(1));
+	const excludes = skipRules.filter((d) => !d.startsWith("!"));
+
+	// 1. Explicit inclusions bypass exclusions
+	for (const inc of includes) {
+		if (
+			normalizedPath === inc ||
+			normalizedPath.startsWith(inc + "/") ||
+			inc.startsWith(normalizedPath + "/")
+		) {
+			return false; // Do not skip: path is the target, a child, or a required parent
+		}
+	}
+
+	// 2. Standard exclusions
+	for (const exc of excludes) {
+		if (normalizedPath === exc || normalizedPath.startsWith(exc + "/")) {
+			return true; // Skip
+		}
+	}
+
+	return false;
 }
 
 /** Awaitable timeout that resolves after `ms` milliseconds. */
@@ -212,7 +252,7 @@ export async function generateCommitMessage(
 				max_tokens: 120,
 			}),
 		});
-		if (!res.ok) return "";
+		if (!(res.status < 200 || res.status >= 300)) return "";
 		const data = await res.json();
 		const msg = data.choices?.[0]?.message?.content?.trim();
 		// Normalize: strip quotes, keep only the first line and cap at 72 chars.
@@ -220,4 +260,18 @@ export async function generateCommitMessage(
 	} catch {
 		return "";
 	}
+}
+
+// ------------------------------------------------------------------------
+// manifest handling utils
+// ------------------------------------------------------------------------
+export const MANIFEST_PATHS = new Set([
+	PLUGIN_MANIFEST_PATH,
+	WIDGET_MANIFEST_PATH,
+	THEME_MANIFEST_PATH,
+	NOTEBOOK_MANIFEST_FILE,
+]);
+
+export function isManifestPath(path: string): boolean {
+	return MANIFEST_PATHS.has(path);
 }

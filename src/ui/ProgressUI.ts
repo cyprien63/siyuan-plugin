@@ -1,16 +1,11 @@
 /**
- * UI dialogs for the sync plugin.
- *
- * This module holds the two dialogs shown during sync operations:
- *   - `SyncProgressUI`: modal progress bar (status text + progress bar +
- *     details line) used by push / pull / remove-encryption flows.
- *   - `showDiffDialog`: confirmation dialog listing the changes a push would
- *     make (upload / delete / reuse / conflicts), resolving to a boolean.
+ * Modal dialog interfaces.
+ * Contains `SyncProgressUI` for live progress tracking during sync operations
+ * and `showDiffDialog` for pre-push change summaries.
  */
 import { Dialog } from "siyuan";
-import { MergePlan } from "./types";
-//import { sanitizeForDisplay } from "./utils";
-import { t } from "./i18n";
+import { MergePlan } from "../shared-utils/types";
+import { t } from "../shared-utils/i18n";
 
 /**
  * Modal dialog that displays the live progress of a sync operation.
