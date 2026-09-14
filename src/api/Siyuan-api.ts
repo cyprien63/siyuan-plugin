@@ -37,8 +37,14 @@ export class SiYuanAPI {
 				method: "POST",
 				body: JSON.stringify({ path }),
 			});
-			return res.ok ? res.arrayBuffer() : null;
-		} catch {
+			if (res.status >= 200 && res.status < 300) {
+				return await res.arrayBuffer();
+			} else {
+				console.warn(`[GitHub Sync] getFile HTTP ${res.status} for ${path}`);
+				return null;
+			}
+		} catch (err) {
+			console.error(`[GitHub Sync] getFile exception for ${path}:`, err);
 			return null;
 		}
 	}
@@ -48,11 +54,34 @@ export class SiYuanAPI {
 		try {
 			const fd = new FormData();
 			fd.append("path", path);
-			fd.append("file", new Blob([content]));
-			const res = await fetch("/api/file/putFile", { method: "POST", body: fd });
-			const json = await res.json();
-			return json.code === 0;
-		} catch {
+			fd.append("isDir", "false");
+			fd.append("modTime", Date.now().toString()); // Forces SiYuan to index the file
+
+			const fileName = path.split("/").pop() || "file.sy";
+			// Construct a proper File object for the SiYuan backend
+			const fileObj = new File([content], fileName, {
+				type: "application/octet-stream",
+			});
+			fd.append("file", fileObj);
+
+			const res = await fetch("/api/file/putFile", {
+				method: "POST",
+				body: fd,
+			});
+			if (res.status >= 200 && res.status < 300) {
+				const json = await res.json();
+				if (json.code !== 0)
+					console.warn(
+						`[GitHub Sync] putFile rejected by backend for ${path}:`,
+						json,
+					);
+				return json.code === 0;
+			} else {
+				console.error(`[GitHub Sync] putFile HTTP ${res.status} for ${path}`);
+				return false;
+			}
+		} catch (err) {
+			console.error(`[GitHub Sync] putFile exception for ${path}:`, err);
 			return false;
 		}
 	}
@@ -122,7 +151,9 @@ export class SiYuanAPI {
 	}
 
 	/** Fetch a notebook's configuration (`/api/notebook/getNotebookConf`). */
-	public async getNotebookConf(notebookId: string): Promise<SiYuanNotebookConfResponse | null> {
+	public async getNotebookConf(
+		notebookId: string,
+	): Promise<SiYuanNotebookConfResponse | null> {
 		try {
 			const res = await fetch("/api/notebook/getNotebookConf", {
 				method: "POST",
@@ -137,7 +168,10 @@ export class SiYuanAPI {
 	}
 
 	/** Update a notebook's configuration (`/api/notebook/setNotebookConf`). */
-	public async setNotebookConf(notebookId: string, conf: SiYuanNotebookConfigDetails): Promise<boolean> {
+	public async setNotebookConf(
+		notebookId: string,
+		conf: SiYuanNotebookConfigDetails,
+	): Promise<boolean> {
 		try {
 			const res = await fetch("/api/notebook/setNotebookConf", {
 				method: "POST",
@@ -155,7 +189,11 @@ export class SiYuanAPI {
 	 * Read the current appearance settings (theme + light/dark mode).
 	 * `mode` is 0 for light and 1 for dark.
 	 */
-	public async getCurrentAppearance(): Promise<{ mode: number; themeLight: string; themeDark: string } | null> {
+	public async getCurrentAppearance(): Promise<{
+		mode: number;
+		themeLight: string;
+		themeDark: string;
+	} | null> {
 		try {
 			const res = await fetch("/api/system/getConf", {
 				method: "POST",
@@ -179,7 +217,10 @@ export class SiYuanAPI {
 	 * Used after a pull that installed new themes, to restore the previously
 	 * active theme saved inside the theme manifest.
 	 */
-	public async setActiveTheme(themeDir: string, mode: number): Promise<boolean> {
+	public async setActiveTheme(
+		themeDir: string,
+		mode: number,
+	): Promise<boolean> {
 		try {
 			const confRes = await fetch("/api/system/getConf", {
 				method: "POST",
@@ -218,7 +259,9 @@ export class SiYuanAPI {
 			const listJson = await listRes.json();
 			if (listJson.code !== 0 || !listJson.data?.packages) return false;
 
-			const pkg = listJson.data.packages.find((p: BazaarPackage) => p.name === pluginName);
+			const pkg = listJson.data.packages.find(
+				(p: BazaarPackage) => p.name === pluginName,
+			);
 			if (!pkg) return false;
 
 			const installRes = await fetch("/api/bazaar/installBazaarPlugin", {
@@ -249,7 +292,9 @@ export class SiYuanAPI {
 			const listJson = await listRes.json();
 			if (listJson.code !== 0 || !listJson.data?.packages) return false;
 
-			const pkg = listJson.data.packages.find((p: BazaarPackage) => p.name === widgetName);
+			const pkg = listJson.data.packages.find(
+				(p: BazaarPackage) => p.name === widgetName,
+			);
 			if (!pkg) return false;
 
 			const installRes = await fetch("/api/bazaar/installBazaarWidget", {
@@ -279,7 +324,9 @@ export class SiYuanAPI {
 			const listJson = await listRes.json();
 			if (listJson.code !== 0 || !listJson.data?.packages) return false;
 
-			const pkg = listJson.data.packages.find((p: BazaarPackage) => p.name === themeName);
+			const pkg = listJson.data.packages.find(
+				(p: BazaarPackage) => p.name === themeName,
+			);
 			if (!pkg) return false;
 
 			const installRes = await fetch("/api/bazaar/installBazaarTheme", {
@@ -302,7 +349,10 @@ export class SiYuanAPI {
 	/**
 	 * Recursively walk a workspace directory and build the list of files to sync.
 	 */
-	public async collectDir(siBase: string, ghBase: string): Promise<FileToSync[]> {
+	public async collectDir(
+		siBase: string,
+		ghBase: string,
+	): Promise<FileToSync[]> {
 		const entries = await this.readDir(siBase);
 		const files: FileToSync[] = [];
 
@@ -312,7 +362,8 @@ export class SiYuanAPI {
 
 			if (SKIP_ROOT_DIRS.includes(e.name)) continue;
 			if (SKIP_PATH_FRAGMENTS.some((f) => sp.includes(f))) continue;
-			if (LOCKED_EXTENSIONS.some((ext) => e.name.toLowerCase().endsWith(ext))) continue;
+			if (LOCKED_EXTENSIONS.some((ext) => e.name.toLowerCase().endsWith(ext)))
+				continue;
 
 			if (e.isDir) {
 				files.push(...(await this.collectDir(sp, gp)));

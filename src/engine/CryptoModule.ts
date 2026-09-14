@@ -87,9 +87,16 @@ export class CryptoModule {
 	}
 
 	public async decrypt(encryptedContent: ArrayBuffer): Promise<ArrayBuffer> {
+		const isEnc = this.isEncryptedBuffer(encryptedContent);
 		const keys = await this.deriveRepoKeys();
+
+		// Abort if the file is encrypted but the user hasn't provided a password
+		if (isEnc && (!keys || keys.length === 0)) {
+			throw new Error("Password required to decrypt remote files.");
+		}
+
 		if (!keys || keys.length === 0) return encryptedContent;
-		if (!this.isEncryptedBuffer(encryptedContent)) return encryptedContent;
+		if (!isEnc) return encryptedContent;
 
 		const data = new Uint8Array(encryptedContent);
 		const snippet = Array.from(data.slice(0, Math.min(24, data.length)))

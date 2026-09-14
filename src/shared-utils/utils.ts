@@ -216,7 +216,7 @@ export async function generateCommitMessage(
 				max_tokens: 120,
 			}),
 		});
-		if (!res.ok) return "";
+		if (!(res.status < 200 || res.status >= 300)) return "";
 		const data = await res.json();
 		const msg = data.choices?.[0]?.message?.content?.trim();
 		// Normalize: strip quotes, keep only the first line and cap at 72 chars.

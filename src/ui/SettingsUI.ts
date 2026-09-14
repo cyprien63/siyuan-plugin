@@ -5,7 +5,7 @@
  */
 
 import { Dialog, showMessage, Setting } from "siyuan";
-import { t, availableLocales, setLocale, getLocale } from "../shared-utils/i18n";
+import { t, availableLocales, langs, setLocale, getLocale } from "../shared-utils/i18n";
 import GitHubSyncPlugin from "../index";
 import { SyncEngine } from "../engine/SyncEngine";
 import { GitPluginConfig, SyncError } from "../shared-utils/types";
@@ -38,7 +38,7 @@ export class SettingsUI {
         return (pct: number, status: string, details: string): void => {
             // Instantiate the UI on the first event emission
             if (!ui || ui.isDestroyed) {
-                ui = new SyncProgressUI(t("button.reset_repo"), () => {
+                ui = new SyncProgressUI("GitHub Sync", () => {
                     ui = null; // Clean up memory when the dialog closes
                 });
             }
@@ -195,13 +195,13 @@ export class SettingsUI {
 
 	private mkSelect(ph: string, val: string) {
 		const el: HTMLSelectElement = document.createElement("select");
-		el.className = "b3-select fn__block";
-		el.style.cssText = "width:100%;padding:4px 8px;font-size:14px;";
+		el.className = "b3-select fn__size300";
+		el.style.cssText = "flex:0 1 300px;max-width:100%;padding:4px 8px;font-size:14px;";
 		el.title = ph;
 		availableLocales().forEach((lang) => {
 			const option = document.createElement("option");
 			option.value = lang;
-			option.textContent = lang.toUpperCase();
+			option.textContent = langs[lang];
 			if (lang === val) option.selected = true;
 			el.appendChild(option);
 		});
@@ -218,8 +218,12 @@ export class SettingsUI {
 				el.checked = val === "true";
 				break;
 			case "text":
+				el.className = "b3-text-field fn__size300";
+				el.style.cssText = "flex:0 1 300px;max-width:100%;";
+				el.value = val;
+				break;
 			case "password":
-				el.className = "b3-text-field fn__block";
+				el.className = "b3-text-field";
 				el.placeholder = ph;
 				el.value = val;
 				break;
@@ -232,8 +236,8 @@ export class SettingsUI {
 	private mkActionButton(label: string, onClick: (btn?: HTMLButtonElement) => void | Promise<void>): HTMLButtonElement {
 		const btn = document.createElement("button");
 		btn.type = "button";
-		btn.className = "b3-button b3-button--outline fn__block";
-		//btn.style.cssText = "padding:4px 8px;font-size:14px;";
+		btn.className = "b3-button b3-button--outline";
+		btn.style.cssText = "flex:0 0 auto;min-width:max-content;white-space:nowrap;padding:6px 12px;";
 		btn.textContent = label;
 
 		// assign click handler
@@ -260,12 +264,20 @@ export class SettingsUI {
 	}
 
 	private wrapWithToggle(input: HTMLInputElement): HTMLDivElement {
-		// create wrapper and append visibility toggle after the og input
-		const wrap = document.createElement("div");
-		wrap.style.cssText = "display:flex;gap:8px;align-items:center;width:100%;";
-		wrap.appendChild(input);
-		wrap.appendChild(this.mkVisibilityToggle(input));
-		return wrap;
+    const wrap = document.createElement("div");
+
+    wrap.style.cssText =
+        "display:flex;gap:8px;align-items:center;flex:0 1 300px;max-width:100%;min-width:0;";
+
+    input.style.cssText =
+        "flex:1 1 auto;min-width:0;width:auto;";
+
+    const toggle = this.mkVisibilityToggle(input);
+    toggle.style.flex = "0 0 auto";
+
+    wrap.appendChild(input);
+    wrap.appendChild(toggle);
+    return wrap;
 	}
 
 	private populateActionButtons(onImportComplete: (cfg: GitPluginConfig) => void): HTMLDivElement {
@@ -286,7 +298,9 @@ export class SettingsUI {
 			import: this.mkActionButton(t("button.import"), async () => {
 				const newConfig = await this.engine.importConfig(this.plugin.config);
 				// scrap invalid config
-				if (!newConfig) return;
+				if (!newConfig) {
+					return;
+				}
 				// update UI
 				onImportComplete(newConfig)
 			}),

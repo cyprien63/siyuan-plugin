@@ -50,11 +50,7 @@ export default class GitHubSyncPlugin extends Plugin {
 		}
 
 		const siyuan = new SiYuanAPI();
-		const api = new GitHubAPI(
-			this.config.token,
-			this.config.username,
-			this.config.repo,
-		);
+		const api = new GitHubAPI(this.config);
 		const crypto = new CryptoModule(this.config);
 		this.ledger = new SyncStateLedger(this);
 		this.engine = new SyncEngine(api, crypto, this.ledger, this.config, siyuan);

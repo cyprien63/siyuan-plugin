@@ -81,40 +81,34 @@ const locales: Record<string, LocaleMap> = {
 	},
 
 	"dialog.remove_encryption_body": {
-		fr: `
-		Le dépôt distant va être ré-uploadé SANS chiffrement :\n
-		• tout le contenu sera ré-uploadé en clair (les NOMS des carnets seront aussi restaurés)\n
-		• tous les anciens fichiers chiffrés seront supprimés du dépôt pour que personne ne puisse les récupérer.\n
-		Confirmez pour continuer`,
-		en: `
-		The remote repository will be re-pushed WITHOUT encryption:\n
-		• all content will be re-uploaded in cleartext (notebook NAMES will be restored too)\n
-		• every old encrypted file will be deleted from the remote so nobody can recover it.\n
-		Confirm to continue`,
-		zh: `
-		远程仓库将被重新推送且不使用加密：\n
-		• 所有内容将以明文形式重新上传（笔记本名称也将恢复\n
-		• 每一个旧的加密文件都将从远程仓库删除，以确保无人可以恢复\n
-		确认以继续`,
+		fr: `Le dépôt distant va être ré-uploadé SANS chiffrement :
+	• tout le contenu sera ré-uploadé en clair (les NOMS des carnets seront aussi restaurés)
+	• tous les anciens fichiers chiffrés seront supprimés du dépôt pour que personne ne puisse les récupérer.
+Confirmez pour continuer`,
+		en: `The remote repository will be re-pushed WITHOUT encryption:
+	• all content will be re-uploaded in cleartext (notebook NAMES will be restored too)
+	• every old encrypted file will be deleted from the remote so nobody can recover it.
+Confirm to continue`,
+		zh: `远程仓库将被重新推送且不使用加密：
+	• 所有内容将以明文形式重新上传（笔记本名称也将恢复
+	• 每一个旧的加密文件都将从远程仓库删除，以确保无人可以恢复
+确认以继续`,
 	},
 	"dialog.remove_encryption_title": {
 		fr: "🔓 Supprimer le chiffrement",
 		en: "🔓 Remove encryption",
 		zh: "🔓 移除加密",
 	},
-	"dialog.reset_repo_body": {
-		fr: `
-			Si vous devez modifier ou supprimer votre mot de passe, vous devez réinitialiser votre dépôt.\n
-			• Cette opération supprimera tous les fichiers du dépôt.\n
-			Confirmer pour continuer\n`,
-		en: `
-			If you need to change or remove your password, you need to reset your repository.\n
-			• With this operation, all files in the repository will be deleted and it will be necessary to be pushed again with the newly desired configuration.\n
-			Confirm to continue`,
-		zh: `
-			如果您需要更改或删除密码，则需要重置您的存储库\n
-			• 此操作将删除存储库中的所有文件，您需要使用新的配置重新推送存储库。\n
-			确认继续`,
+	"dialog.remove_encryption_warning": {
+		fr: `Si vous devez modifier ou supprimer votre mot de passe, vous devez réinitialiser votre dépôt.
+	• Cette opération supprimera tous les fichiers du dépôt.
+Confirmer pour continuer`,
+		en: `If you need to change or remove your password, you need to reset your repository.
+		• With this operation, all files in the repository will be deleted and it will be necessary to be pushed again with the newly desired configuration.
+Confirm to continue`,
+		zh: `如果您需要更改或删除密码，则需要重置您的存储库
+	• 此操作将删除存储库中的所有文件，您需要使用新的配置重新推送存储库。
+确认继续`,
 	},
 	"dialog.reset_repo_title": {
 		fr: "🗑️ SUPPRIMER TOUS les fichiers du dépôt",
@@ -327,6 +321,11 @@ const locales: Record<string, LocaleMap> = {
 		fr: "(fichier supprimé)",
 		en: "(file deleted)",
 		zh: "(文件已删除)",
+	},
+	"msg.language_changed": {
+		fr: "Langue (requiert un redémarrage)",
+		en: "Language set, please restart",
+		zh: "语言 (需要重启)",
 	},
 	"msg.no_changes_conflicts": {
 		fr: "Aucun changement à envoyer. ⚠️ {n} conflit(s) ignoré(s).",
@@ -655,7 +654,7 @@ export function t(key: string): string {
 	// return key of selected language
 	// if it doesn't exist, return english key
 	// if it doesn't exist, return key
-	return locales[key][current] ?? locales[key]["en"] ?? key;
+	return locales[key]?.[current] ?? locales[key]?.["en"] ?? key;
 }
 
 /** Return the currently active locale code. */
@@ -665,10 +664,16 @@ export function getLocale(): string {
 
 /** Switch the active locale (ignored silently if the locale is unknown). */
 export function setLocale(l: string) {
-	if (locales[l]) current = l;
+	if (langs[l]) {
+		current = l;
+		return;
+	}
+
+	const localeCode = Object.entries(langs).find(([, label]) => label === l)?.[0];
+	if (localeCode) current = localeCode;
 }
 
 /** List of every supported locale code. */
 export function availableLocales(): string[] {
-	return Object.values(langs);
+	return Object.keys(langs);
 }

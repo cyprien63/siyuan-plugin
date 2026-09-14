@@ -3,6 +3,7 @@ import {
 	GitHubTreeItem,
 	GitHubCommit,
 	GitHubTreePayload,
+	GitPluginConfig,
 } from "../shared-utils/types";
 import { base64ToArrayBuffer, sleep } from "../shared-utils/utils";
 import { t } from "../shared-utils/i18n";
@@ -26,15 +27,9 @@ export class GitHubError extends Error {
  */
 export class GitHubAPI {
 	/**
-	 * @param token    GitHub Personal Access Token (must include the `repo` scope).
-	 * @param username GitHub account or organisation that owns the repository.
-	 * @param repo     Name of the repository to sync with.
+	 * @param config	Access the config info
 	 */
-	constructor(
-		private token: string,
-		private username: string,
-		private repo: string,
-	) {}
+	constructor(private config: GitPluginConfig) {}
 
 	/**
 	 * Perform an authenticated request against the GitHub REST API with
@@ -50,7 +45,11 @@ export class GitHubAPI {
 		body?: object,
 		retries = 3,
 	): Promise<Response> {
-		const url = `${GITHUB_API}${path}`;
+		// Force cache bypassing by appending a unique timestamp to GET requests
+		const url =
+			method === "GET"
+				? `${GITHUB_API}${path}${path.includes("?") ? "&" : "?"}t=${Date.now()}`
+				: `${GITHUB_API}${path}`;
 		let attempt = 0;
 
 		while (attempt < retries) {
@@ -60,9 +59,10 @@ export class GitHubAPI {
 			const res = await fetch(url, {
 				method,
 				headers: {
-					Authorization: `Bearer ${this.token}`,
+					Authorization: `Bearer ${this.config.token}`,
 					"Content-Type": "application/json",
 					Accept: "application/vnd.github+json",
+					"Cache-Control": "no-cache", // Explicitly request fresh data
 				},
 				body: body ? JSON.stringify(body) : undefined,
 			});
@@ -104,15 +104,18 @@ export class GitHubAPI {
 				continue;
 			}
 
-			if (!res.ok) {
+			if (res.status < 200 || res.status >= 300) {
 				const errorBody = await res.text();
-				console.error(
-					`[GitHub Sync] VERBOSE API ERROR:\n` +
-						`  URL: ${method} ${url}\n` +
-						`  Status: ${res.status} ${res.statusText}\n` +
-						`  Headers: ${res.headers}\n` +
-						`  Body: ${errorBody}`,
-				);
+				// Mute expected 404 and 409 errors from the console
+				if (res.status !== 404 && res.status !== 409) {
+					console.error(
+						`[GitHub Sync] VERBOSE API ERROR:\n` +
+							`  URL: ${method} ${url}\n` +
+							`  Status: ${res.status} ${res.statusText}\n` +
+							`  Headers: ${res.headers}\n` +
+							`  Body: ${errorBody}`,
+					);
+				}
 				throw new GitHubError(res.status, res.statusText, errorBody, url);
 			}
 
@@ -130,21 +133,19 @@ export class GitHubAPI {
 	 * an empty list. A 404 (missing tree) is also mapped to `[]`.
 	 */
 	async getRemoteTree(treeSha: string): Promise<GitHubTreeItem[]> {
-		// check if our tree is empty
 		if (treeSha === "4b825dc642cb6eb9a060e54bf8d69288fbee4904") {
 			return [];
 		}
-
-		const res = await this.gh(
-			`/repos/${this.username}/${this.repo}/git/trees/${treeSha}?recursive=1`,
-		);
-
-		if (!res.ok) {
-			if (res.status === 404) return [];
-			throw new Error(`[GitHub Sync] Failed to fetch tree: ${res.statusText}`);
+		try {
+			const res = await this.gh(
+				`/repos/${this.config.username}/${this.config.repo}/git/trees/${treeSha}?recursive=1`,
+			);
+			const data = await res.json();
+			return (data.tree || []) as GitHubTreeItem[];
+		} catch (err) {
+			if (err instanceof GitHubError && err.status === 404) return [];
+			throw err;
 		}
-		const data = await res.json();
-		return (data.tree || []) as GitHubTreeItem[];
 	}
 
 	/**
@@ -154,39 +155,23 @@ export class GitHubAPI {
 	 */
 	async downloadBlob(sha: string): Promise<ArrayBuffer | null> {
 		try {
-			const url = `/repos/${this.username}/${this.repo}/git/blobs/${sha}`;
+			const url = `/repos/${this.config.username}/${this.config.repo}/git/blobs/${sha}`;
 			const res = await this.gh(url);
-			if (!res.ok) {
-				console.error(
-					`[GitHub Sync] downloadBlob failed HTTP ${res.status} for ${sha}`,
-				);
-				return null;
-			}
 			const data = await res.json();
-			if (!data.content) {
-				console.warn(`[GitHub Sync] downloadBlob: no content for ${sha}`);
-				return null;
-			}
-			try {
-				return base64ToArrayBuffer(data.content);
-			} catch (e) {
-				console.error(
-					`[GitHub Sync] downloadBlob: failed to decode base64 for ${sha}: ${e instanceof Error ? e.message : String(e)}`,
-				);
-				throw e;
-			}
+			if (!data.content) return null;
+
+			return base64ToArrayBuffer(data.content);
 		} catch (err) {
-			console.error(
-				`[GitHub Sync] downloadBlob exception for ${sha}: ${err instanceof Error ? err.message : String(err)}`,
-			);
+			console.error(`[GitHub Sync] downloadBlob exception for ${sha}:`, err);
 			return null;
 		}
 	}
-
 	/** Verify that the token can access the repository (HTTP 200 = OK). */
 	async testConnection(): Promise<boolean> {
 		try {
-			const res = await this.gh(`/repos/${this.username}/${this.repo}`);
+			const res = await this.gh(
+				`/repos/${this.config.username}/${this.config.repo}`,
+			);
 			return res.status === 200;
 		} catch {
 			return false;
@@ -196,35 +181,42 @@ export class GitHubAPI {
 	/** Fetch the 30 most recent commits of the repository. */
 	async getCommits(): Promise<GitHubCommit[]> {
 		const res = await this.gh(
-			`/repos/${this.username}/${this.repo}/commits?per_page=30`,
+			`/repos/${this.config.username}/${this.config.repo}/commits?per_page=30`,
 		);
-		if (!res.ok) throw new Error(t("msg.repo_empty"));
+		if (res.status < 200 || res.status >= 300)
+			throw new Error(t("msg.repo_empty"));
 		return res.json();
 	}
 
 	/** Fetch repository metadata (default branch, ownership, etc.). */
 	getRepoInfo() {
-		return this.gh(`/repos/${this.username}/${this.repo}`);
+		return this.gh(`/repos/${this.config.username}/${this.config.repo}`);
 	}
 
 	/** Fetch the SHA that a branch currently points to. */
 	getRef(branch: string) {
 		return this.gh(
-			`/repos/${this.username}/${this.repo}/git/refs/heads/${branch}`,
+			`/repos/${this.config.username}/${this.config.repo}/git/ref/heads/${branch}`,
 		);
 	}
 
 	/** Fetch a single commit object (including its tree SHA). */
 	getCommit(sha: string) {
-		return this.gh(`/repos/${this.username}/${this.repo}/git/commits/${sha}`);
+		return this.gh(
+			`/repos/${this.config.username}/${this.config.repo}/git/commits/${sha}`,
+		);
 	}
 
 	/** Create a git blob from base64-encoded content and return its SHA. */
 	createBlob(content: string) {
-		return this.gh(`/repos/${this.username}/${this.repo}/git/blobs`, "POST", {
-			content,
-			encoding: "base64",
-		});
+		return this.gh(
+			`/repos/${this.config.username}/${this.config.repo}/git/blobs`,
+			"POST",
+			{
+				content,
+				encoding: "base64",
+			},
+		);
 	}
 
 	/**
@@ -239,7 +231,7 @@ export class GitHubAPI {
 		const path = "_siyuan-github-sync-init";
 		const content = btoa("Initialized by siyuan-github-sync plugin.");
 		return this.gh(
-			`/repos/${this.username}/${this.repo}/contents/${path}`,
+			`/repos/${this.config.username}/${this.config.repo}/contents/${path}`,
 			"PUT",
 			{
 				message: "chore: init repository for siyuan-github-sync",
@@ -262,7 +254,7 @@ export class GitHubAPI {
 			payload.base_tree = baseTree;
 		}
 		return this.gh(
-			`/repos/${this.username}/${this.repo}/git/trees`,
+			`/repos/${this.config.username}/${this.config.repo}/git/trees`,
 			"POST",
 			payload,
 		);
@@ -270,19 +262,23 @@ export class GitHubAPI {
 
 	/** Create a commit object pointing at a tree, with the given parents. */
 	createCommit(message: string, tree: string, parents: string[]) {
-		return this.gh(`/repos/${this.username}/${this.repo}/git/commits`, "POST", {
-			message,
-			tree,
-			parents,
-		});
+		return this.gh(
+			`/repos/${this.config.username}/${this.config.repo}/git/commits`,
+			"POST",
+			{
+				message,
+				tree,
+				parents,
+			},
+		);
 	}
 
 	/** Move a branch pointer to a new commit SHA (effectively the "push"). */
 	updateRef(branch: string, sha: string) {
 		return this.gh(
-			`/repos/${this.username}/${this.repo}/git/refs/heads/${branch}`,
+			`/repos/${this.config.username}/${this.config.repo}/git/refs/heads/${branch}`,
 			"PATCH",
-			{ sha },
+			{ sha, force: true },
 		);
 	}
 }

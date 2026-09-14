@@ -19,6 +19,7 @@ import {
 	MergePlan,
 	GitPluginConfig,
 	GitHubTreeItem,
+	GitHubRef,
 	CHUNK_SIZE,
 	PLUGIN_MANIFEST_PATH,
 	WIDGET_MANIFEST_PATH,
@@ -68,7 +69,7 @@ export class SyncEngine extends EventEmitter {
 		private crypto: CryptoModule,
 		private ledger: SyncStateLedger,
 		private config: GitPluginConfig,
-		private siyuan: SiYuanAPI
+		private siyuan: SiYuanAPI,
 	) {
 		super();
 	}
@@ -158,6 +159,8 @@ export class SyncEngine extends EventEmitter {
 			if (!isRepoValid)
 				return { status: "success", message: t("msg.repo_empty") };
 
+			await this.verifyEncryptionPassword();
+
 			// 2. Diff local vs remote to find missing/changed files
 			this.emit(
 				"progress",
@@ -216,26 +219,30 @@ export class SyncEngine extends EventEmitter {
 	// Push helpers
 
 	private async seedEmptyRepoIfNeeded(): Promise<void> {
-		// get repo info
 		const repoInfo = await (await this.api.getRepoInfo()).json();
 		this.currentBranch = repoInfo.default_branch || "main";
 
-		let refRes = await this.api.getRef(this.currentBranch);
-
-		// initiate repo if empty
-		if (!refRes.ok) {
-			console.warn(
-				"[GitHub Sync] Repository has no commits, seeding an initial commit...",
-			);
-			const initRes = await this.api.initEmptyRepo(this.currentBranch);
-			if (!initRes.ok) throw new Error("Failed to seed empty repository");
-			refRes = await this.api.getRef(this.currentBranch);
+		let refData;
+		try {
+			const refRes = await this.api.getRef(this.currentBranch);
+			refData = await refRes.json();
+		} catch (err) {
+			if (
+				err instanceof GitHubError &&
+				(err.status === 409 || err.status === 404)
+			) {
+				console.warn(
+					"[GitHub Sync] Repository has no commits, seeding an initial commit...",
+				);
+				await this.api.initEmptyRepo(this.currentBranch);
+				const newRefRes = await this.api.getRef(this.currentBranch);
+				refData = await newRefRes.json();
+			} else {
+				throw err;
+			}
 		}
 
-		// get last commit & tree
-		const refData = await refRes.json();
 		this.lastCommitSha = refData.object.sha;
-
 		const lastCommit = await (
 			await this.api.getCommit(this.lastCommitSha!)
 		).json();
@@ -281,7 +288,9 @@ export class SyncEngine extends EventEmitter {
 	}
 
 	private async calculateMergePlan(): Promise<MergePlan> {
-		const localFiles = (await this.siyuan.collectDir(`/${SYNC_ROOT}`, SYNC_ROOT)).filter(
+		const localFiles = (
+			await this.siyuan.collectDir(`/${SYNC_ROOT}`, SYNC_ROOT)
+		).filter(
 			(f) =>
 				!isManifestPath(f.githubPath) &&
 				!f.githubPath.endsWith(`/${NOTEBOOK_MANIFEST_FILE}`),
@@ -304,9 +313,23 @@ export class SyncEngine extends EventEmitter {
 				const remoteContent = await this.api.downloadBlob(pullSha);
 				if (remoteContent) {
 					const decrypted = await this.crypto.decrypt(remoteContent);
-					await this.siyuan.putFile(pull.siYuanPath, decrypted);
+					const writeSuccess = await this.siyuan.putFile(
+						pull.siYuanPath,
+						decrypted,
+					);
+
+					if (writeSuccess) {
+						plan.toReuse.push({ githubPath: pull.githubPath, sha: pullSha });
+					} else {
+						console.error(
+							`[GitHub Sync] Pre-push pull rejected for: ${pull.siYuanPath}`,
+						);
+					}
+				} else {
+					console.error(
+						`[GitHub Sync] Failed to download pre-push pull for: ${pull.githubPath}`,
+					);
 				}
-				plan.toReuse.push({ githubPath: pull.githubPath, sha: pullSha });
 			}
 		}
 
@@ -417,6 +440,10 @@ export class SyncEngine extends EventEmitter {
 			this.ledger.updateFile(r.githubPath, r.sha, r.sha);
 		}
 		await this.ledger.save(this.lastCommitSha || "");
+
+		// Signal the UI to close
+		this.emit("progress", 100, t("ui.done"), t("msg.no_changes_none"));
+
 		return { status: "success", message: t("msg.no_changes_none") };
 	}
 
@@ -501,7 +528,7 @@ export class SyncEngine extends EventEmitter {
 				? await this.crypto.encrypt(m.content)
 				: m.content;
 			const res = await this.api.createBlob(arrayBufferToBase64(content));
-			if (res.ok) {
+			if (res.status < 200 || res.status >= 300) {
 				const data = await res.json();
 				this.treeItemsToCommit.push({
 					path: m.githubPath,
@@ -575,6 +602,8 @@ export class SyncEngine extends EventEmitter {
 
 		await this.ledger.save(commitData.sha);
 
+		this.emit("progress", 100, t("ui.done"), t("msg.push_done_prefix"));
+
 		return { status: "success", message: t("msg.push_done_prefix") };
 	}
 
@@ -594,12 +623,20 @@ export class SyncEngine extends EventEmitter {
 		const repoInfo = await (await this.api.getRepoInfo()).json();
 		this.currentBranch = repoInfo.default_branch || "main";
 
-		const refRes = await this.api.getRef(this.currentBranch);
-		if (!refRes.ok) return false; // Repository is empty
+		let refData: GitHubRef;
+		try {
+			const refRes = await this.api.getRef(this.currentBranch);
+			refData = await refRes.json();
+		} catch (err) {
+			if (
+				err instanceof GitHubError &&
+				(err.status === 409 || err.status === 404)
+			)
+				return false;
+			throw err;
+		}
 
-		const refData = await refRes.json();
 		this.lastCommitSha = refData.object.sha;
-
 		const lastCommit = await (
 			await this.api.getCommit(this.lastCommitSha!)
 		).json();
@@ -668,6 +705,7 @@ export class SyncEngine extends EventEmitter {
 					}
 
 					const remoteSynced = this.ledger.getRemoteSha(originalPath);
+					const localSynced = this.ledger.getLocalSha(originalPath);
 
 					// Compare actual local content to prevent ghost conflicts if a local file was deleted
 					const localContent = await this.siyuan.getFile(siPath);
@@ -676,7 +714,7 @@ export class SyncEngine extends EventEmitter {
 							? await calculateGitSha(localContent)
 							: "";
 
-					if (remoteSynced !== item.sha || localSha !== item.sha) {
+					if (remoteSynced !== item.sha || localSha !== localSynced) {
 						toPull.push({ item, siPath, originalPath });
 					}
 					processed++;
@@ -688,13 +726,14 @@ export class SyncEngine extends EventEmitter {
 				15 + Math.round((processed / this.remoteTreeCache.length) * 10),
 				t("progress.analysis"),
 				t("progress.checking_remote_files") +
-				` ${processed}/${this.remoteTreeCache.length}`,
+					` ${processed}/${this.remoteTreeCache.length}`,
 			);
 		}
 
 		return { toPull, remotePlainSet };
 	}
 
+	// download + write operations
 	// download + write operations
 	private async downloadAndWriteFiles(
 		toPull: { item: GitHubTreeItem; siPath: string; originalPath: string }[],
@@ -722,11 +761,18 @@ export class SyncEngine extends EventEmitter {
 					if (content && content.byteLength > 0) {
 						try {
 							const decrypted = await this.crypto.decrypt(content);
-							await this.siyuan.putFile(siPath, decrypted);
+							const writeSuccess = await this.siyuan.putFile(siPath, decrypted);
 
-							const ptSha = await calculateGitSha(decrypted);
-							this.ledger.updateFile(originalPath, ptSha, item.sha);
-							stateUpdated = true;
+							if (writeSuccess) {
+								console.debug(`[GitHub Sync] Wrote pulled file to workspace: ${siPath}`);
+								const ptSha = await calculateGitSha(decrypted);
+								this.ledger.updateFile(originalPath, ptSha, item.sha);
+								stateUpdated = true;
+							} else {
+								console.error(
+									`[GitHub Sync] Backend rejected file write for: ${siPath}`,
+								);
+							}
 						} catch (decryptErr) {
 							console.error(`[DIAGNOSTIC] Failed to decrypt ${siPath}`);
 							throw new Error(t("error.pull_verification_failed"), {
@@ -825,21 +871,38 @@ export class SyncEngine extends EventEmitter {
 		deletedCount: number,
 		pulledCount: number,
 	): Promise<SyncResult> {
+		console.debug(
+			`[GitHub Sync] finalizePull: stateUpdated=${stateUpdated}, deletedCount=${deletedCount}, pulledCount=${pulledCount}`,
+		);
+
 		if (stateUpdated) {
+			console.debug(
+				`[GitHub Sync] Saving ledger with commit: ${this.lastCommitSha}`,
+			);
 			await this.ledger.save(this.lastCommitSha!);
 		}
 
+		const message = t("msg.pull_done")
+			.replace("{updated}", String(pulledCount))
+			.replace("{deleted}", String(deletedCount))
+			.replace("{skipped}", "0");
+
+		// Signal the UI to close the progress dialog
+		this.emit("progress", 100, t("ui.done"), message);
+
 		if (deletedCount > 0 || stateUpdated) {
+			console.debug(
+				`[GitHub Sync] Refreshing filetree and scheduling reload...`,
+			);
 			await this.siyuan.refreshFiletree();
 			setTimeout(() => window.location.reload(), 1500); // Reload SiYuan to rebuild indexes
+		} else {
+			console.debug(`[GitHub Sync] No changes required, skipping reload.`);
 		}
 
 		return {
 			status: "success",
-			message: t("msg.pull_done")
-				.replace("{updated}", String(pulledCount))
-				.replace("{deleted}", String(deletedCount))
-				.replace("{skipped}", "0"),
+			message,
 		};
 	}
 
@@ -915,45 +978,53 @@ export class SyncEngine extends EventEmitter {
 	public async importConfig(
 		cfg: GitPluginConfig,
 	): Promise<GitPluginConfig | void> {
-		const fi = document.createElement("input");
-		fi.type = "file";
-		fi.accept = ".json";
-		fi.onchange = async () => {
-			const file = fi.files?.[0];
-			if (!file) return;
-			try {
-				const text = await file.text();
-				const data = JSON.parse(text);
-				if (!data.username || !data.repo || !data.token) {
-					showMessage("Invalid file", 6000, "error");
+		return new Promise<GitPluginConfig | void>((resolve) => {
+			const fi = document.createElement("input");
+			fi.type = "file";
+			fi.accept = ".json";
+			fi.onchange = async () => {
+				const file = fi.files?.[0];
+				if (!file) {
+					resolve();
 					return;
 				}
 
-				// import known fields in cfg
-				for (const key of Object.keys(data)) {
-					if (key in cfg) {
-						(cfg as GitPluginConfig)[key] = data[key];
+				try {
+					const text = await file.text();
+					const data = JSON.parse(text);
+					if (!data.username || !data.repo || !data.token) {
+						showMessage("Invalid file", 6000, "error");
+						resolve();
+						return;
 					}
-				}
 
-				if (data.language) {
-					try {
-						setLocale(data.language);
-					} catch {
-						console.error(
-							"[GitHub Sync] Failed to set locale from imported config:",
-							data.language,
-						);
+					// import known fields in cfg
+					for (const key of Object.keys(data)) {
+						if (key in cfg) {
+							(cfg as GitPluginConfig)[key] = data[key];
+						}
 					}
+
+					if (data.language) {
+						try {
+							setLocale(data.language);
+						} catch {
+							console.error(
+								"[GitHub Sync] Failed to set locale from imported config:",
+								data.language,
+							);
+						}
+					}
+					showMessage(t("msg.config_loaded"));
+					resolve(cfg);
+				} catch {
+					showMessage(t("error.invalid_file"), 6000, "error");
+					resolve();
 				}
-				showMessage(t("msg.config_loaded"));
-				return cfg;
-			} catch {
-				showMessage(t("error.invalid_file"), 6000, "error");
-				return;
-			}
-		};
-		fi.click();
+			};
+			fi.addEventListener("cancel", () => resolve(), { once: true });
+			fi.click();
+		});
 	}
 
 	/**
@@ -1014,16 +1085,23 @@ export class SyncEngine extends EventEmitter {
 			// get branch & repo info
 			const repoInfo = await (await this.api.getRepoInfo()).json();
 			const branch = repoInfo.default_branch || "main";
-			const refRes = await this.api.getRef(branch);
 
 			// If the repository is completely empty, just clear the local setting
-			if (!refRes.ok) {
-				// fire message about repo being already empty
-				showMessage(t("msg.repo_empty"), 8000);
-				return;
+			let refData: GitHubRef;
+			try {
+				const refRes = await this.api.getRef(branch);
+				refData = await refRes.json();
+			} catch (err) {
+				if (
+					err instanceof GitHubError &&
+					(err.status === 409 || err.status === 404)
+				) {
+					showMessage(t("msg.repo_empty"), 8000);
+					return;
+				}
+				throw err;
 			}
 
-			const refData = await refRes.json();
 			const lastCommitSha = refData.object.sha;
 			const lastCommitRes = await this.api.getCommit(lastCommitSha);
 			const lastCommit = await lastCommitRes.json();
