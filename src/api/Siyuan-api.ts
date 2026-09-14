@@ -10,10 +10,12 @@ import {
 	BazaarPackage,
 	FileToSync,
 	SKIP_ROOT_DIRS,
+	SYNC_ROOT,
 	SKIP_PATH_FRAGMENTS,
 	LOCKED_EXTENSIONS,
 	SiYuanNotebookConfigDetails,
 } from "../shared-utils/types";
+import { shouldSkipPath } from "../shared-utils/utils";
 
 export class SiYuanAPI {
 	/** List the entries of a workspace directory (`/api/file/readDir`). */
@@ -359,7 +361,12 @@ export class SiYuanAPI {
 			const sp = siBase === "/" ? `/${e.name}` : `${siBase}/${e.name}`;
 			const gp = ghBase ? `${ghBase}/${e.name}` : e.name;
 
-			if (SKIP_ROOT_DIRS.includes(e.name)) continue;
+			// Calculate the path relative to SYNC_ROOT (e.g. "storage" or "storage/av")
+			const relPath = gp.startsWith(`${SYNC_ROOT}/`)
+				? gp.slice(SYNC_ROOT.length + 1)
+				: e.name;
+
+			if (shouldSkipPath(relPath, SKIP_ROOT_DIRS)) continue;
 			if (SKIP_PATH_FRAGMENTS.some((f) => sp.includes(f))) continue;
 			if (LOCKED_EXTENSIONS.some((ext) => e.name.toLowerCase().endsWith(ext)))
 				continue;

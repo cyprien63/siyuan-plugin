@@ -39,6 +39,7 @@ import {
 	extractTextFromSyFile,
 	generateCommitMessage,
 	friendlyError,
+	shouldSkipPath,
 } from "../shared-utils/utils";
 import {
 	generatePluginManifest,
@@ -646,12 +647,13 @@ export class SyncEngine extends EventEmitter {
 			await this.api.getRemoteTree(lastCommit.tree.sha)
 		).filter((i) => {
 			if (i.type !== "blob") return false;
-			const p = i.path;
-			if (p.startsWith("data/")) {
-				const firstSegment = p.slice(5).split("/")[0];
-				if (SKIP_ROOT_DIRS.includes(firstSegment)) return false;
+
+			if (i.path.startsWith(`${SYNC_ROOT}/`)) {
+				const relPath = i.path.slice(SYNC_ROOT.length + 1);
+				if (shouldSkipPath(relPath, SKIP_ROOT_DIRS)) return false;
 			}
-			return p.startsWith(SYNC_ROOT);
+
+			return i.path.startsWith(SYNC_ROOT);
 		});
 
 		return true;
@@ -744,6 +746,7 @@ export class SyncEngine extends EventEmitter {
 		for (let i = 0; i < toPull.length; i += CHUNK_SIZE_PULL) {
 			const chunk = toPull.slice(i, i + CHUNK_SIZE_PULL);
 
+			// Update progress per file
 			this.emit(
 				"progress",
 				25 + Math.round((i / toPull.length) * 50),

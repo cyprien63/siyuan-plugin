@@ -58,6 +58,42 @@ export async function calculateGitSha(content: ArrayBuffer): Promise<string> {
 		.join("");
 }
 
+/**
+ * Evaluates a relative path against an array of skip rules.
+ * Supports explicit inclusion using the '!' prefix.
+ */
+export function shouldSkipPath(
+	relativePath: string,
+	skipRules: string[],
+): boolean {
+	const normalizedPath = relativePath.replace(/^\//, "");
+
+	const includes = skipRules
+		.filter((d) => d.startsWith("!"))
+		.map((d) => d.slice(1));
+	const excludes = skipRules.filter((d) => !d.startsWith("!"));
+
+	// 1. Explicit inclusions bypass exclusions
+	for (const inc of includes) {
+		if (
+			normalizedPath === inc ||
+			normalizedPath.startsWith(inc + "/") ||
+			inc.startsWith(normalizedPath + "/")
+		) {
+			return false; // Do not skip: path is the target, a child, or a required parent
+		}
+	}
+
+	// 2. Standard exclusions
+	for (const exc of excludes) {
+		if (normalizedPath === exc || normalizedPath.startsWith(exc + "/")) {
+			return true; // Skip
+		}
+	}
+
+	return false;
+}
+
 /** Awaitable timeout that resolves after `ms` milliseconds. */
 export function sleep(ms: number): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
